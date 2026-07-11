@@ -1,0 +1,2924 @@
+# Progress log
+
+Append one entry per completed work package (agent handoff protocol,
+implementation-plan.md). Newest entries at the bottom.
+
+## WP-01 · Project skeleton + packages + CI
+
+Built the full workspace skeleton: five local Swift packages under `Packages/`
+(`CoreModel`, `Secrets`, `GoogleHealthClient`, `SyncKit`, `CoachKit`), each
+`swift-tools-version: 6.2` with `platforms: [.iOS("26.0"), .macOS("26.0")]` and
+the exact `swiftSettings` block from the plan (`.defaultIsolation(MainActor.self)`,
+`NonisolatedNonsendingByDefault`, `InferIsolatedConformances`) on both the
+library and test target, wired per architecture.md §2
+(GoogleHealthClient → CoreModel+Secrets; SyncKit → CoreModel+Secrets+GoogleHealthClient;
+CoachKit → CoreModel+Secrets), each with one placeholder source file and one
+passing Swift Testing test; the app target `FitBridge` (bundle id
+`com.fitbridge.app`, iOS 26.0 deployment target) generated via `xcodegen`
+(present at `/opt/homebrew/bin/xcodegen`, v2.45.4; `tuist` not installed) from
+a hand-written `project.yml` implementing WP-01 step 4: HealthKit entitlement,
+honest/specific `NSHealthShareUsageDescription` / `NSHealthUpdateUsageDescription`
+strings, `UIBackgroundModes: [processing]`, `BGTaskSchedulerPermittedIdentifiers:
+[com.fitbridge.sync.refresh]`, and a `CFBundleURLTypes` OAuth redirect scheme;
+plus `.github/workflows/ci.yml` (macOS runner, per-package `swift test
+-Xswiftc -warnings-as-errors` matrix job with SPM caching, then an app job
+that runs `xcodegen generate` + `xcodebuild build test` on a real iOS
+simulator, `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`); and moved the two design
+mockups into `Design/` via `git mv`, fixing the now-relative links in
+architecture.md's companion-docs list. **Verification performed in this
+session** (not just written): `swift test` passes with zero warnings in all
+five packages, and `xcodebuild build test -scheme FitBridge` passes on a real
+iOS 26.4.1 simulator (toolchain found: Xcode 26.4.1 / Build 17E202, Swift
+driver 6.3.1 (swiftlang-6.3.1.1.2), macOS 26.5.1 host). **Deliberate
+deferrals:** no real model/keychain/networking code — every package ships
+only a marker enum plus a placeholder test, per WP-01 scope; the app target is
+otherwise an empty SwiftUI "hello world" (`ContentView`) since onboarding/
+dashboard is WP-10. **Deviations / surprises, tracked here per the handoff
+protocol's "blocked?" clause:** (1) the default `swift package init` on this
+toolchain emits `swift-tools-version: 6.3`; used `6.2` as specified anyway —
+it built and tested cleanly, so no downgrade was needed. (2) `.macOS("26.0")`
+was added to every `Package.swift` (beyond the plan's iOS-only framing)
+specifically so `swift test` runs natively on this Mac, per WP-01's own
+platform-requirement note; this doesn't affect the app target, which only
+consumes the iOS library products. (3) The generated `.xcodeproj` is
+deliberately **not** committed (`.gitignore` excludes it) — `project.yml` is
+the source of truth and CI regenerates it via `xcodegen generate`; this is
+standard xcodegen practice and avoids pbxproj merge conflicts, but it's a
+choice beyond what WP-01's text states outright. (4) The OAuth redirect URL
+scheme (`com.fitbridge.app` / `CFBundleURLName: com.fitbridge.app.oauth`) is a
+**placeholder** — no real Google iOS OAuth client exists yet (that's P-1.3, a
+human prerequisite). WP-04 must reconcile this with whatever redirect URI the
+real Google Cloud OAuth client actually issues (commonly the reversed client
+ID as the scheme) before `ASWebAuthenticationSession` can work end-to-end. (5)
+Locally, `xcodebuild` initially reported all destinations (device *and*
+simulator) as unavailable ("iOS 26.4 is not installed") even though
+`xcrun simctl list runtimes` showed iOS 26.2 installed and `-showsdks` showed
+the iOS 26.4 SDK on disk — Xcode's platform-component registration was
+incomplete until `xcodebuild -downloadPlatform iOS` pulled the matching
+26.4.1 simulator runtime (8.46 GB); this is a local-machine environment gap,
+not a project misconfiguration, but a fresh CI runner or a fresh Xcode install
+could hit the same wall and should have the iOS platform pre-provisioned (GH's
+hosted macOS images normally ship simulator runtimes preinstalled). (6)
+`ci.yml` pins `runs-on: macos-26` and `xcode-version: "26.4"` — GitHub's
+actual hosted-runner image/label for Xcode 26 was not verified against a live
+GitHub Actions environment in this session (no network access to
+github.com from here); whoever first runs this CI should confirm/adjust the
+runner label and Xcode version pin. **Human follow-up still required per the
+plan:** opening `FitBridge.xcodeproj` in Xcode at least once to eyeball
+signing/team settings before running on a physical device — not needed for
+simulator builds, which already pass headlessly.
+
+## WP-03 · Secrets — Keychain wrapper
+
+Built `Packages/Secrets` per the plan: `public actor KeychainStore` with
+`get(_:) -> String?`, `set(_:for:)`, `delete(_:)`, and
+`deleteAll(matching prefix:)`; `public enum SecretKey: String` with the five
+required cases (`googleRefreshToken` → `"google.refreshToken"`,
+`googleAccessToken` → `"google.accessToken"`, `claudeAPIKey` →
+`"provider.claude.apiKey"`, `openAIAPIKey` → `"provider.openai.apiKey"`,
+`geminiAPIKey` → `"provider.gemini.apiKey"`); and `public enum SecretsError`
+(`.keychain(status: OSStatus)`, `.undecodableValue`) whose `description`
+renders only the OS's generic status message via `SecCopyErrorMessageString`
+— never a key name or stored value, matching architecture.md D11 and the
+plan's "never log values" instruction (nothing in this package logs
+anything). `SecretKey`'s raw values are namespaced by a leading dot-segment
+(`google.*` / `provider.*`) specifically so `deleteAll(matching: "provider.")`
+removes exactly the three provider keys and `deleteAll(matching: "google.")`
+removes exactly the two Google keys — verified by a dedicated round-trip
+test in both directions. Every write goes through
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` with
+`kSecAttrSynchronizable` explicitly `false` (`KeychainSecurityBackend.write`).
+**Testing-note seam, as anticipated by the WP-03 brief:** all `SecItem*`
+calls sit behind an internal `protocol KeychainBackend` (get/set/delete/
+enumerate by account string); the required Swift Testing suite
+(`KeychainStoreTests.swift` — set/get/delete/overwrite round-trip per key and
+across all five keys, missing-key → nil, delete-when-absent is a no-op,
+prefix delete both directions, prefix-with-no-match is a no-op, plus a small
+namespacing-invariant suite) runs against `InMemoryKeychainBackend`, a
+lock-protected in-memory fake in the test target. A second suite,
+`KeychainSecurityBackendTests.swift`, is the one integration-style test that
+attempts the **real** Keychain end-to-end (same round-trip, via
+`KeychainSecurityBackend` pointed at a throwaway
+`"com.fitbridge.secrets.integration-test"` service so it can never touch a
+real secret); it gates itself with a `.enabled(if:)` trait backed by a
+probe (`isRealKeychainUsable()`) that attempts a real add+delete first. **On
+this Mac, the probe fails and the test skips itself** with an explanatory
+message rather than failing the suite — confirmed by hand with a standalone
+`SecItemAdd` call outside the test harness, which returned **`OSStatus
+-34018` / "A required entitlement isn't present"** (`errSecMissingEntitlement`),
+exactly the failure mode the WP-03 brief warned about for unsigned `swift
+test` runners on macOS. Also added `kSecUseDataProtectionKeychain: true` to
+every query per the brief's suggestion, for iOS/macOS behavioral consistency
+— it didn't change the entitlement outcome on this Mac (the process itself
+lacks the keychain-access entitlement, which `kSecUseDataProtectionKeychain`
+doesn't grant), but it's the correct flag for the app to ship with regardless
+and is a no-op on iOS. **Verification performed in this session:** `swift
+test -Xswiftc -warnings-as-errors` passes in `Packages/Secrets` — 14 tests
+across 3 suites, 0 failures, 1 test gracefully skipped (the real-Keychain
+integration test, for the reason above), 0 warnings. **Deliberate
+deviations from the plan's literal text (behavior preserved, per the
+handoff protocol's "blocked?" clause):** (1) `KeychainStore`'s methods are
+declared `throws(SecretsError)` (typed throws) rather than the silent
+`-> String?` / `Void` signatures shown in the plan — Keychain calls can
+genuinely fail for reasons other than "key absent" (e.g. a locked device,
+or the very entitlement gap seen here), and swallowing those into a bare
+`nil`/success would hide real errors from callers like `GoogleAuthManager`
+(WP-04) that need to distinguish "no refresh token yet" from "Keychain
+call failed." `get` still returns plain `nil` for the not-found case, only
+non-"not found" statuses throw. (2) Kept `Sources/Secrets/Secrets.swift`
+(the WP-01 `SecretsPlaceholder` marker enum) in place rather than deleting
+it: `CoachKit`, `SyncKit`, and `GoogleHealthClient`'s WP-01 placeholder
+sources reference `SecretsPlaceholder.moduleName` directly, and WP-03's
+scope is `Packages/Secrets` only — removing it would have broken those
+out-of-scope packages' compilation. All new WP-03 API lives in separate
+files alongside it. (3) `KeychainBackend`, `KeychainSecurityBackend`, and
+`KeychainSecurityBackend.service` are internal, not public — the plan
+doesn't specify a backend seam at all (it just lists `KeychainStore`'s
+methods), but the testing note explicitly asked for one; kept it minimal
+and unexported since it's a test seam, not app-facing API. **Note on the
+wider workspace observed during this session:** `Packages/CoreModel` (WP-02)
+did not build in this session's checkout — `swift test` there fails with
+"cannot find 'PromptVersion'/'ChatTurn'/'ContextSnapshot' in scope," and
+that breakage cascades into `GoogleHealthClient`, `SyncKit`, and `CoachKit`
+(none of which I touched). This looks like WP-02 mid-flight elsewhere
+(concurrent agent) rather than anything WP-03 caused; `Packages/Secrets`
+was verified fully in isolation (`cd Packages/Secrets && swift test`), which
+is what WP-03 requires and does not depend on CoreModel.
+
+## WP-02 · CoreModel — SwiftData models + value types
+
+Built the full CoreModel package: `GoogleDataType`, a 39-case enum covering every row
+of base-knowledge §3 (verified by a test asserting `allCases.count == 39`), raw-valued
+by its snake_case `filterName` with `endpointName` derived by swapping `_`→`-`
+(`body_fat`/`body-fat` round-trips exactly, plus a generic round-trip test over all
+cases); `scope` (`.activityAndFitness/.healthMetrics/.sleep/.nutrition/.ecg/.irn`); and
+`writability: .healthKit(String)/.localOnly/.skip` derived from base-knowledge §5 (22
+`.healthKit` rows, 4 `.localOnly`, 13 `.skip` — no HealthKit import anywhere, per
+architecture.md D2). The seven SwiftData `@Model` classes are exactly as specified
+(`SyncState` with `backfillCursor`, `LocalSample` with `linkedWatchWorkoutUUID: UUID?`,
+`KnowledgeProfile`, `DerivedInsight`, `PromptVersion`, `ChatTurn`, `ContextSnapshot`),
+plus the `ProfileField` and `HealthContext` Codable structs (`ProfileField.excludedFromAI`
+defaults to `isClinical`'s value unless explicitly overridden — D8 — with an explicit
+opt-in test). `CoreModel.makeContainer(inMemory:)` builds the schema from a single
+`CoreModel.modelTypes` array (so the container and the "round-trips every model" test
+can't drift); the production path opens the store under
+`Application Support/FitBridge/CoreModel.store` and applies `NSFileProtectionComplete`
+via `FileProtectionType.complete`, guarded `#if os(iOS)` since Data Protection classes
+are meaningless on the macOS host this package's tests actually run on (noted in a doc
+comment, per the WP-02 spec's own anticipation of this). All required tests pass in
+`Packages/CoreModel`: unique-constraint enforcement for `SyncState.dataType` and
+`LocalSample.externalID` (insert-same-key-twice ⇒ one row, last-write-wins — SwiftData's
+`.unique` behaves as an upsert, not a thrown error); the casing round-trip; a
+table-driven test asserting every one of the 39 types' `writability` against a
+hand-transcribed base-knowledge §5 table; clinical-default-exclusion (plus explicit-
+override in both directions); and a container round-trip inserting one instance of all
+seven models and re-fetching each. 15 tests / 6 suites (39 sub-cases inside the
+writability test), 0 failures, 0 warnings — verified via
+`swift test -Xswiftc -warnings-as-errors` from a clean `.build` in this session, not
+just written. **Deviations/judgment calls (handoff protocol's "blocked?" clause):**
+(1) base-knowledge §5's mapping table doesn't name-match §3 1:1 for several rows —
+"Daily Resting Heart Rate" is the *only* resting-HR row in §3 so it gets the ✅
+mapping as written, but "Heart Rate Variability," "Oxygen Saturation," and "VO2
+Max"/"Run VO2 Max" each have a same-scope "Daily X" sibling in §3 that §5 never
+mentions; I mapped the sample-level (S) type §5 names literally and routed its
+unmapped daily-rollup sibling to `.skip` as a redundant aggregate duplicate (documented
+inline per case in `GoogleDataType.swift`). §5's bare "Respiratory Rate" has no exact
+match in §3 at all (only "Daily Respiratory Rate" and "Respiratory Rate Sleep
+Summary" exist) — resolved to the sample-level "Respiratory Rate Sleep Summary" on
+the same reasoning. (2) §5's "Active Energy Burned / Total Calories →
+activeEnergyBurned / basalEnergyBurned" row is a positional pairing; I encoded it
+literally (`totalCalories` → `HKQuantityTypeIdentifierBasalEnergyBurned`) even though
+WP-11 explicitly warns not to *invent* a basal-only split from Google's single total —
+this table only declares an available target string, not a decision to actually write
+it; that call is TypeMapper's (WP-11) to make. (3) Despite ECG's ❌ "Works?" marker in
+§5 ("cannot reconstruct in Apple Health"), I routed it to `.localOnly` rather than
+`.skip`, matching D2's explicit list and WP-14's step 1 ("ECG, Active Zone Minutes,
+Active Minutes, IRN persist to LocalSample") — ❌ in §5 means "no HK write target,"
+not "discard the data." All four of those types are `.localOnly`; `.skip` is reserved
+for types with no established destination anywhere in the plan (misc/rollup types like
+Activity Level, Altitude, Food Measurement Unit, Sedentary Period, Swim Lengths Data,
+Time in Heart Rate Zone, Calories In Heart Rate Zone, and the unmapped Daily-rollup
+duplicates from (1)). (4) `Exercise` and `Food`/`Nutrition Log` don't correspond to a
+single `HKQuantityTypeIdentifier`/`HKCategoryTypeIdentifier` string, so their
+`.healthKit` payload is a documented sentinel (`"HKWorkoutType"`,
+`"HKCorrelationTypeIdentifierFood"`) rather than a real HealthKit rawValue — flagged in
+doc comments for WP-12/WP-13 to consume correctly. (5) Kept the WP-01
+`CoreModelPlaceholder` marker enum in `CoreModel.swift` alongside the real WP-02 types:
+`SyncKit`, `CoachKit`, and `GoogleHealthClient`'s WP-01 placeholder sources reference
+`CoreModelPlaceholder.moduleName` at compile time, and WP-02's scope is
+`Packages/CoreModel` only — deleting it would have broken those out-of-scope packages'
+builds (confirmed: re-verified all three build and test cleanly from a clean `.build`
+against the finished CoreModel). (6) `SwiftData` stored `[ProfileField]` (a plain
+Codable struct array, on `KnowledgeProfile.sections`) and `[String]`
+(`DerivedInsight.sourceFields`) directly with no special handling needed — worth
+flagging only because it was a real "will this even compile" risk going in, and it
+didn't require a `Data`-encoded workaround. **Deliberately deferred:** everything
+downstream that *uses* this vocabulary (TypeMapper's actual unit conversions, the real
+HK↔Google plumbing, KnowledgeStore derivation) — WP-02 is vocabulary + persistence
+only, no I/O, per its own objective line.
+
+## WP-06 · HealthKit authorization
+
+Built `Packages/SyncKit/Sources/SyncKit/HealthKit/` as four files split along the
+platform boundary the WP-06 brief asks for. Two are HealthKit-import-free and always
+compile: `HealthKitAuthTypes.swift` (`HealthKitAuthorizationStatus` —
+`.authorized`/`.denied`/`.notDetermined`, mirroring `HKAuthorizationStatus` without
+naming it; `HealthKitAuthError` — `.healthDataUnavailable`, `.noHealthKitMapping`,
+`.unresolvedIdentifier`, `.underlying`) and `HealthKitIdentifier.swift` (the required
+"pure, unit-testable function": `HealthKitIdentifierClassifier.classify(_:)` takes a
+HealthKit identifier string from CoreModel's `GoogleDataType.writability` table —
+consumed as the single source of truth, never re-duplicated — and classifies it into
+`HealthKitIdentifierKind.quantity/.category/.workout/.correlationFood` by prefix
+match (`HKQuantityTypeIdentifier`/`HKCategoryTypeIdentifier`) plus the two documented
+sentinels (`"HKWorkoutType"`, `"HKCorrelationTypeIdentifierFood"`) CoreModel's
+`GoogleDataType.swift` doc comments and this file's WP-02 deviation note (4) call
+out for `.exercise`/`.food`/`.nutritionLog`; unrecognized strings return `nil`, never
+a guess). The other two are `#if canImport(HealthKit)`-guarded per the brief's
+platform constraint: `HealthKitObjectTypeResolver.sampleType(for:)` turns a
+classified identifier into the concrete `HKSampleType` (`HKQuantityType`/
+`HKCategoryType`/`HKWorkoutType`/`HKCorrelationType` all being `HKSampleType`
+subclasses, so one return type covers every kind), throwing
+`UnresolvedHealthKitIdentifier` — never dropping silently — for anything the
+classifier or HealthKit itself doesn't recognize; and `HealthKitAuth`, the actual
+deliverable class: `init()` owns one `HKHealthStore` (documented as
+one-per-app-shared, DI'd like `KeychainStore`/`GoogleAuthManager`), `isAvailable`
+(`HKHealthStore.isHealthDataAvailable()`), `requestWrite(for: [GoogleDataType])` and
+`requestRead(_:)` (both `async throws(HealthKitAuthError)`, both validate every
+type's HealthKit mapping *before* checking `isAvailable` or touching the store —
+so a bad type is rejected identically on every platform rather than being masked by
+the availability gate — then throw `.healthDataUnavailable` with no system prompt if
+unavailable, then call `HKHealthStore.requestAuthorization(toShare:read:)`), and
+`writeStatus(for:) -> HealthKitAuthorizationStatus` (returns `.notDetermined` without
+touching the store when unavailable or unmapped; otherwise maps
+`.sharingAuthorized`/`.sharingDenied`/`.notDetermined` straight through). `requestRead`'s
+and the type's own doc comments spell out, per the brief's explicit instruction, that
+HealthKit never reveals read denial — only write/share status is queryable — and that
+every caller must treat an empty read result as "no data or denied," never a hard
+error. `HealthKitAuth.p0WriteTypes = [.steps, .heartRate, .weight, .sleep]` is the P0
+write set (WP-06 step 2), derived from — not re-declaring — CoreModel's writability
+strings (`HKQuantityTypeIdentifierStepCount`/`HeartRate`/`BodyMass`,
+`HKCategoryTypeIdentifierSleepAnalysis`). **Tests** (`Tests/SyncKitTests/HealthKit/`,
+21 total): `HealthKitIdentifierClassifierTests` (always compiles, no HealthKit
+import) is the WP-06-required completeness test — every one of the 22 `.healthKit`
+rows across all 39 `GoogleDataType` cases classifies to a non-nil kind, all four
+structural kinds are exercised by at least one real case, the P0 set and the two
+sentinels classify exactly as expected, unknown/malformed strings classify to `nil`,
+and `.localOnly`/`.skip` cases are confirmed excluded from the `.healthKit` walk;
+`HealthKitObjectTypeResolverTests` and `HealthKitAuthTests` (both
+`#if canImport(HealthKit)`-guarded) add real-HealthKit-type coverage — every
+`.healthKit` string resolves to the right concrete subclass, round-trips its
+`.identifier`, the P0 set resolves to the exact real `HKObjectType` constants, both
+sentinels resolve correctly, unknown identifiers throw and carry the offending
+string, and `HealthKitAuth`'s validation ordering/gating (`.noHealthKitMapping` for
+`.localOnly`/`.skip` types, `.healthDataUnavailable` when ungated, `.notDetermined`
+fallbacks) all behave as documented.
+
+**Verification performed in this session, and why it took an unusual path:**
+`Packages/GoogleHealthClient` is mid-edit by a concurrent agent (WP-04/WP-05) and
+currently fails to build for an unrelated reason: two source files share the literal
+basename `GoogleHealthClient.swift` — the original WP-01 placeholder
+(`Sources/GoogleHealthClient/GoogleHealthClient.swift`) and a new WP-05 file
+(`Sources/GoogleHealthClient/DataClient/GoogleHealthClient.swift`) — which both plain
+`swift test` ("multiple producers... GoogleHealthClient.swift.o") and
+`xcodebuild build -scheme FitBridge -destination 'generic/platform=iOS Simulator'`
+("Filename \"GoogleHealthClient.swift\" used twice") reject outright, since SyncKit's
+`Package.swift` depends on `GoogleHealthClient` per architecture.md §2 and I was not
+permitted to touch that package. Confirmed via `stat`/`git status` that this is a
+live, active edit (files touched to the second at the time I was checking), not a
+stale artifact, and re-ran `swift test -Xswiftc -warnings-as-errors` in
+`Packages/SyncKit` four times over the session (with a clean `.build` in between) —
+same error every time; the failure is entirely inside `GoogleHealthClient` (verified
+by reading its two colliding files) and reproduces identically outside SwiftPM via
+`xcodebuild`. Rather than block on someone else's in-flight work, I verified WP-06's
+own code two ways that don't route through `GoogleHealthClient` at all: (1) a scratch
+SwiftPM package outside the repo
+(`/private/tmp/.../scratchpad/wp06-verify`, deleted before finishing — never part of
+the repo) with a copy of this session's four `Sources/SyncKit/HealthKit/*.swift` and
+three `Tests/SyncKitTests/HealthKit/*.swift` files, depending only on the real
+`Packages/CoreModel` (no `GoogleHealthClient` in its graph) — `swift test -Xswiftc
+-warnings-as-errors` there: **21 tests, 3 suites, 0 failures, 0 warnings**; (2) direct
+`xcrun swiftc -typecheck` of the same four `Sources/SyncKit/HealthKit/*.swift` files
+against a real `CoreModel.swiftmodule` built for `arm64-apple-ios26.0-simulator`
+(iPhoneSimulator26.4 SDK), with the exact flags `Package.swift` specifies
+(`-swift-version 6 -strict-concurrency=complete -default-isolation MainActor
+-enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature
+InferIsolatedConformances`): zero errors, zero warnings — confirming the real
+`HKHealthStore.requestAuthorization`/`authorizationStatus`/`HKObjectType.*`
+usage in `HealthKitAuth`/`HealthKitObjectTypeResolver` compiles for iOS with
+HealthKit actually imported. Both checks together substitute for the blocked
+in-repo `swift test`/`xcodebuild` runs per the handoff protocol's guidance to verify
+"another way" when a concurrent package's in-flight state blocks the normal path.
+**Once `GoogleHealthClient`'s duplicate-filename conflict is resolved (its own
+scope, not touched here), `swift test -Xswiftc -warnings-as-errors` in
+`Packages/SyncKit` and `xcodebuild build -scheme FitBridge -destination
+'generic/platform=iOS Simulator'` should be re-run as the authoritative in-repo
+confirmation — nothing in this session's evidence suggests they'll fail, but they
+were not able to actually complete end-to-end.** Also confirmed as an aside:
+`HKHealthStore()`, `HKObjectType.quantityType(forIdentifier:)`/`categoryType`/
+`workoutType()`/`correlationType(forIdentifier:)`, and
+`HKHealthStore.authorizationStatus(for:)` are all safe to call on this macOS host
+without a HealthKit entitlement or Info.plist usage strings (verified with disposable
+scratch scripts, not part of the package) — only `requestAuthorization` itself would
+need a real prompt, which no test in this suite calls (the `isAvailable`-gated tests
+confirm `HKHealthStore.isHealthDataAvailable()` is `false` on this Mac and short-circuit
+before ever reaching that call, guarding each such assertion with `guard !auth.isAvailable
+else { return }` so the test steps aside harmlessly if ever run somewhere HealthKit
+data really is available). **Deviations/judgment calls:** (1) `requestWrite`/
+`requestRead` validate type→HealthKit-type resolution *before* the `isAvailable`
+gate (the WP-06 brief doesn't specify an order) specifically so `.noHealthKitMapping`/
+`.unresolvedIdentifier` are reachable and testable on any platform, including this
+macOS host where `isAvailable` is unconditionally `false` and would otherwise mask
+every other error path. (2) `HealthKitAuth`/`HealthKitObjectTypeResolver` are guarded
+with `#if canImport(HealthKit)` as instructed, even though on this repo's current
+macOS SDK (Xcode 26.4.1) `HealthKit.framework` is actually importable for native
+macOS (`API_AVAILABLE(..., macos(13.0))` on `HKHealthStore` itself) and
+`isHealthDataAvailable()` just returns `false` at runtime rather than failing to
+compile — so the guard is currently a no-op on this machine, kept anyway as the
+forward-looking, portable boundary the brief asks for. (3) Did not add a
+`protocol HealthStoreProtocol`-style seam for `HealthKitAuth` — WP-06's own "Tests:"
+line scopes required testing to the mapping table only and defers real-authorization
+testing to UI tests (test plan §5); that seam is WP-08's stated job
+(`HealthStoreProtocol` for save/delete/query), not WP-06's. (4) Left the WP-01
+`SyncKitPlaceholder` marker in `SyncKit.swift` untouched (unlike CoreModel/Secrets'
+placeholders, nothing outside `SyncKit` itself references it, so it could have been
+removed, but leaving it matched prior WPs' conservative precedent and kept this
+session's diff scoped to new files only). **Deliberately deferred:** the app
+onboarding stub implementation-plan.md's WP-06 line mentions in its "Touches" list —
+this session's explicit scope was `Packages/SyncKit` only, no app-target sources;
+WP-10 owns the actual onboarding screen. `TypeMapper` (WP-07), `HealthKitWriter`
+(WP-08), and `WatchCoverageIndex`/`ConflictResolver` (WP-12b) are unstarted, as
+expected — this WP only had to make write/read authorization requestable and the
+identifier mapping table resolvable and complete.
+
+## WP-04 · GoogleAuthManager — OAuth 2.0 + PKCE
+
+## WP-05 · GoogleHealthClient — typed v4 REST client
+
+Built both WPs together in `Packages/GoogleHealthClient` (WP-05 depends on WP-04;
+implemented in the stated order, one package, one session). **WP-04:** `PKCE` (enum,
+`generateCodeVerifier`/`generateState` via `SecRandomCopyBytes`, `codeChallenge` via
+CryptoKit SHA256 + base64url, verified against RFC 7636 Appendix B.1's own worked
+example verifier→challenge pair); `GoogleOAuthScope.urlString(for:access:)` mapping
+CoreModel's `GoogleDataType.Scope` families to the literal
+`https://www.googleapis.com/auth/googlehealth.{scope}.{readonly|writeonly}` URL
+(base-knowledge §2) — FitBridge only ever requests `.readonly`; `GoogleAuthConfig`
+(client ID, redirect URI/scheme, the three Google endpoints, `additionalScopes`
+defaulting to `["openid","email"]` so the post-consent userinfo/`hd` call has
+something to authenticate with); `actor GoogleAuthManager` — `validAccessToken()`
+(cached-token + 60s expiry margin), single-flight refresh (`coalescedRefresh()`:
+concurrent callers all await the one in-flight `Task`, cleared only by whichever call
+created it, race-free because the check-and-set has no `await` between them under
+actor serialization), `forceRefresh()` (unconditional refresh for WP-05's 401 path),
+`completeConsent(code:codeVerifier:redirectURI:)` (token exchange → store refresh
+token → userinfo call → `hd` claim present ⇒ `.workspaceAccountUnsupported`, tokens
+cleared), `missingHealthScopes(from:)` (pure incremental-scope diff), and the
+iOS-only `beginConsent`/`ensure` (in `GoogleAuthManager+Consent.swift`, `#if
+os(iOS)`, presents `ASWebAuthenticationSession` with
+`prefersEphemeralWebBrowserSession = true`, then calls back into the cross-platform
+`completeConsent`). Token persistence goes through a new small
+`protocol GoogleTokenStoring` (get/set refresh + access token) that
+`Secrets.KeychainStore` satisfies via a same-file protocol-conformance extension
+(`KeychainStore+GoogleTokenStoring.swift`) rather than a wrapper type — no
+`@retroactive` needed since this package owns the protocol and imports `Secrets`.
+**WP-05:** `GoogleHealthClient` (data client struct, `DataClient/GoogleHealthDataClient.swift`
+— same name as the module per architecture.md's key-types list; had to rename the
+*file* to avoid an SPM "multiple producers" clash with WP-01's placeholder
+`GoogleHealthClient.swift`, which still holds the untouched `GoogleHealthClientPlaceholder`
+marker `SyncKit` references) — `reconcile`/`dailyRollup`, both `@concurrent`, hitting
+`users/me/dataTypes/{endpointName}/dataPoints:{method}` with a POST body of
+`startTime`/`endTime`/`pageToken`; `GoogleDataPoint`/`DataSource`/`Page` (flat decode
+target); `UnitNormalizer` (table-driven, currently one row: `distance.distance`
+mm→m); resilience loop (401 → `auth.forceRefresh()` → exactly one retry, else
+`.unauthorized`; 429/5xx → `BackoffPolicy` exponential+jitter, base 1s/cap 60s/max 5
+attempts, `Retry-After` header honored verbatim when present) with **all** timing
+behind injected `BackoffSleeper`/`JitterSource` protocols (no direct `Task.sleep` in
+the retry loop) and all wall-clock reads behind `TokenClock` — both fully virtual in
+tests. All networking (`HTTPSession` protocol) is injected; no real network in any
+test. Fixtures under `Tests/GoogleHealthClientTests/Fixtures/GoogleHealth/`:
+`steps.json`, `heart-rate.json`, `sleep.json`, `weight.json`,
+`paged-steps-p1.json`/`-p2.json`, `error-429.json` per WP-05 step 7, **plus one
+addition beyond the literal list**, `distance.json`, added specifically to exercise
+the required mm→m normalization test (none of the seven listed fixtures contain a
+distance field) — every fixture carries a `"_comment"` key recording that its
+envelope shape (top-level `point` array + `nextPageToken`, `dataSource`
+platform/device.displayName/recordingMethod, `value` object keyed
+`<dataType.filterName>.<field>`) is hand-derived from base-knowledge §2, since that
+doc describes the nesting convention but not an exact response envelope — this is
+flagged as an assumption to reconcile against real API access (still gated on P-1.3,
+the Google Cloud OAuth client). **Concurrency note surfaced by this WP:** both
+packages set `.defaultIsolation(MainActor.self)` (WP-01), which turns out to apply
+not just to this package's own declarations but transitively to CoreModel's
+user-declared computed properties too (`GoogleDataType.endpointName`/`.filterName`
+are MainActor-isolated in *their* module for the same reason) — resolved by reading
+`type.endpointName` once via `await` per request (outside the retry loop) in the
+data client, and by using `GoogleDataType.rawValue` (compiler-synthesized, not
+subject to the default-isolation inference the same way) instead of `.filterName`
+in `UnitNormalizer`/prefix-stripping, documented inline at both call sites so a
+future reader doesn't "fix" it back to `.filterName` and reintroduce the isolation
+error. **Verification performed in this session:** `swift test -Xswiftc
+-warnings-as-errors` passes in `Packages/GoogleHealthClient` from a clean `.build` —
+35 tests / 7 suites, 0 failures, 0 warnings — covering every required test from both
+WPs' "Tests:" lines (PKCE known-vector + shape; token exchange request encoding for
+both grant types; refresh single-flight, 10 concurrent callers ⇒ 1 refresh request,
+asserted via the recording HTTP stub; expiry margin at the exact 60s boundary via a
+manual/settable clock; `invalid_grant` ⇒ `.reconsentRequired` with tokens cleared;
+Workspace `hd`-claim detection *and* a personal-account non-detection counterpart;
+fixture decode goldens for steps/heart-rate/sleep/weight incl. the sleep session's
+nested stage segments preserved verbatim in `sessionPayload`; mm→m normalization,
+both via the `distance.json` fixture and directly against the `UnitNormalizer` table;
+2-page pagination stitching with an asserted-identical request window across both
+pages; 401→forceRefresh→retry exactly once, plus a persistent-401 case proving it
+gives up after exactly one retry instead of looping; 429 backoff schedule
+`[1.0, 2.0, 4.0, 8.0]` against the recording sleeper with zero jitter, plus a
+separate 5xx-backoff case and a `Retry-After`-honored case; malformed JSON and
+missing-required-field decode failures ⇒ `.decodingFailed`) plus a redaction
+tripwire (a fake refresh token and a fake authorization code are asserted absent
+from every `GoogleAuthError.description` on the relevant failure paths, and from the
+result of a deliberately-mismatched redirect-state extraction). Also re-verified
+after this session's changes: `Packages/CoreModel` (15 tests), `Packages/Secrets` (14
+tests), `Packages/SyncKit` (22 tests — WP-06 landed concurrently in this checkout),
+and `Packages/CoachKit` (1 placeholder test) all still build and pass cleanly in
+isolation — none of them were touched. **The one thing `swift test` structurally
+cannot verify:** the iOS-only `#if os(iOS)` block in
+`GoogleAuthManager+Consent.swift` (the actual `ASWebAuthenticationSession` /
+`beginConsent`/`ensure` presentation code) never compiles under a macOS `swift test`
+run at all, by design — so as an extra check beyond the task's minimum bar, this
+session also ran `xcodebuild build -scheme GoogleHealthClient -destination
+"generic/platform=iOS Simulator"` directly against the SPM package (Xcode can treat
+a `Package.swift` as a project via `-list`/`-scheme`), which built the whole package
+including the iOS-only file for arm64 **and** x86_64 simulator slices with zero
+errors and zero warnings — real device/simulator behavior (presenting the actual
+consent sheet, receiving a real redirect) is still unverified, since that requires
+the real Google Cloud iOS OAuth client from P-1.3, which remains outstanding.
+**Deviations / judgment calls (handoff protocol's "blocked?" clause):** (1) the
+Health API's exact `reconcile`/`dailyRollup` request shape is under-specified in
+base-knowledge.md (it documents the resource pattern and method names but not a
+request verb/body) — implemented as `POST` with a JSON `{startTime, endTime,
+pageToken?}` body against `.../dataPoints:{method}`, following Google's general
+custom-method REST convention (colon-suffixed method name); this is a best-guess
+interface to reconcile once real API access/docs exist, not a confirmed contract.
+(2) `ensure(scopes:)` and `beginConsent` are iOS-only per the task brief's own
+framing ("ASWebAuthenticationSession is iOS-only UI"); `missingHealthScopes(from:)`
+itself is plain actor-isolated (not `nonisolated`) since it reads `grantedScopes`,
+and is tested directly via `@testable import` rather than through the UI-facing
+`ensure` wrapper. (3) `grantedScopes` lives only in actor memory, populated from the
+token/refresh response's `scope` field — not persisted across app launches; a fresh
+launch re-derives it from a fresh refresh's `scope` response before `ensure` can
+correctly gate anything, which is fine for P0 (no settings screen calls it yet) but
+worth a callback for whoever builds WP-17's incremental-consent settings screen. (4)
+`BackoffPolicy`'s jitter is `capped_delay * (1 + jitterFraction * jitterMaxFraction)`
+(default `jitterMaxFraction = 0.25`, so up to +25% on top of the exponential value)
+rather than the more common "full jitter" (random *within* `[0, capped_delay]`) —
+chosen so the *test* schedule with a zero-jitter fake is the clean, exactly-doubling
+sequence the WP-05 test line implies ("429 backoff schedule... against a virtual
+clock"), while production still gets real jitter; this is a reasonable reading of
+"exponential backoff with jitter," not a literal spec, since base-knowledge.md
+doesn't prescribe a jitter formula. (5) Did not persist `cachedAccessToken` reads
+from Keychain on `GoogleAuthManager` init (i.e., a fresh `GoogleAuthManager` always
+performs one refresh before its first `validAccessToken()` returns, even if a still-
+valid access token was stored from a previous run) — `SecretKey.googleAccessToken`
+is written on every successful refresh/consent for future use (e.g. diagnostics) but
+never read back on startup; this trades one extra refresh call per app launch for
+simplicity, and is a reasonable place for a future WP to optimize if refresh-quota
+pressure ever shows up. **Outstanding per the handoff protocol:** the real-Google
+smoke test in both WPs' "Done when" (consent against real Google on device; a real
+account's week of steps) requires the human-provisioned OAuth client (P-1.3) —
+skipped, as instructed, and still gated on that prerequisite; also still open is
+P-1.3 itself and reconciling `project.yml`'s placeholder OAuth redirect scheme
+(`com.fitbridge.app`, per WP-01's note) against whatever real reversed-client-ID
+scheme Google issues once that client exists.
+
+## WP-07 · TypeMapper v1 (steps, heart rate, sleep, weight)
+
+Built `Packages/SyncKit/Sources/SyncKit/TypeMapper/` as four new files, following the
+pure/impure split WP-06 established (`HealthKitIdentifierClassifier` vs.
+`HealthKitObjectTypeResolver`) rather than the single `HKQuantitySample`/`HKCategorySample`-
+returning function the plan's illustrative sketch shows: **`MappedTypes.swift`**
+(HealthKit-free, no CoreModel/GoogleHealthClient import either) — `MappedUnit`
+(`.count`/`.countPerMinute`/`.kilogram`), `MappedSleepStage` (an `Int` enum whose raw
+values are hardcoded to match HealthKit's real `HKCategoryValueSleepAnalysis` constants —
+`asleepUnspecified=1, awake=2, asleepCore=3, asleepDeep=4, asleepREM=5` — cross-checked
+against the real enum in a HealthKit-guarded test so a future SDK change can't drift them
+apart silently), `MappedMetadata`, `MappedQuantitySample`, `MappedCategorySample`, and the
+pure result type `MappedDecision` (`.quantity/.category/.localOnly/.skip`); **`TypeMapper.swift`**
+— `enum TypeMapper { static func decide(_ p: GoogleDataPoint) -> MappedDecision }`, the
+actual "correctness lives here" mapping/dropping logic, still HealthKit-free; **`SleepSessionDecoding.swift`**
+— decodes `GoogleDataPoint.sessionPayload`'s `"sleep.segment"` array (matching the existing
+`sleep.json` fixture's shape) via a `nonisolated` `JSONDecoder` + two `ISO8601DateFormatter`s
+(mirroring, but not reusing — it's not `public` — GoogleHealthClient's own
+`ISO8601Formatting.swift`); and **`MappedObject.swift`** — the plan's literal required shape,
+`public enum MappedObject { case quantity(HKQuantitySample); case category([HKCategorySample]);
+case localOnly; case skip }` with the two HealthKit cases behind `#if canImport(HealthKit)`,
+plus `extension TypeMapper { static func map(_ p: GoogleDataPoint) -> MappedObject }` that
+calls `decide(_:)` and wraps its result into real HK objects. **On this repo's macOS test
+host, HealthKit is importable** (WP-06 already established this) and constructing sample
+*objects* needs no entitlement/store/simulator, so both layers — and all required golden
+tests — run for real under plain `swift test`, matching WP-07's "Done when" bar exactly.
+**Routing (step 5):** dispatches off CoreModel's `GoogleDataType.writability` — `.localOnly`
+→ `.localOnly`, `.skip` → `.skip`, `.healthKit` → a second switch on the four implemented P0
+types (steps/heartRate/weight/sleep); any *other* `.healthKit` row (distance, bodyFat,
+exercise, food, ...) also currently falls to `.skip` since this WP doesn't implement it yet —
+**flagged here as the scope note WP-11's implementer needs**: broaden `decideHealthKitMapped`'s
+switch, don't touch the routing shape. **Metadata (step 4):** every emitted sample carries
+`HKMetadataKeyExternalUUID = p.id`, `"fitbridge.externalID": p.id` (note `fitbridge.*`, not
+`bridge.*` — matches the app's rename per architecture.md's naming section), and
+`"fitbridge.sourceDevice": p.source.deviceDisplayName` (carried through as `nil`, never
+coerced to `""`, when Google didn't report a device name — tested explicitly). **Sleep
+(step 3):** stage map `awake→.awake, light→.asleepCore, deep→.asleepDeep, rem→.asleepREM`,
+anything else (including a literal `"unknown"`) `→.asleepUnspecified`; segments are sorted by
+start and walked with a monotonically non-decreasing cursor so every emitted segment's start
+is clamped forward to at least the previous emitted segment's end (guarantees no overlap) and
+both start/end are clamped into the session's own `[start, end]` bounds; a segment that's
+zero-length on arrival or fully consumed by clamping is dropped, and a session left with zero
+usable segments after this process maps to `.skip` (never an empty `.category([])`).
+**Out-of-range decision, pinned (step "Tests:" line):** negative steps and heart rate outside
+`1...300` bpm are **dropped** (routed to `.skip`) — 300 is a deliberately generous upper bound
+so the filter only catches sensor-glitch values like the plan's own "400" example, not real
+exercise data (190 bpm and the boundary value 300 itself are both tested as accepted, 300.01
+as dropped); zero steps (as opposed to negative) is a normal reading and is accepted. The
+plan's "count" half of "drop + count" is **deliberately not implemented here** — `TypeMapper`
+is a pure function with no side channel, and `CoreModel.SyncState.itemCount` already exists
+for whichever pipeline stage (WP-09's `SyncEngine`) actually tallies outcomes; documented
+inline at the `heartRateValidRange` declaration so this isn't mistaken for an oversight.
+**Weight unit (step 2):** base-knowledge.md's "odd base units" note names only distance's
+millimeters, never weight; the existing WP-05 `weight.json` fixture explicitly documents its
+`70.5` value as already-kilograms with no `UnitNormalizer` conversion applied, punting final
+confirmation to this WP — pinned here as **kilograms, no scaling** (70.5 reads as a plausible
+adult body weight in kg; it would be an implausible ~70 g or ~70500 g under the other
+candidate units), with a doc-comment flagging it as still-unconfirmed pending real API access
+(P-1.3). **Fixtures:** per the handoff protocol's reuse instruction, could not literally share
+GoogleHealthClient's `Fixtures/GoogleHealth/*.json` files (different package's test target,
+and `decodeDataPoint` is package-internal) — instead `Tests/SyncKitTests/TypeMapper/TypeMapperFixtures.swift`
+reconstructs the exact same four scenarios (`steps-0001`, `hr-0001`, `weight-0001`,
+`sleep-0001` — same IDs/timestamps/device names/values) as literal `GoogleDataPoint` values,
+with every default parameter traced back to its source JSON fixture in a doc comment.
+**Tests** (`Tests/SyncKitTests/TypeMapper/`, 34 new, all passing): `TypeMapperGoldenTests`
+(9) — one golden test per P0 type (exact HK identifier string/unit/value/dates/metadata) plus
+routing tests (`.localOnly` for ECG/AZM/activeMinutes/IRN, `.skip` for a redundant-rollup type
+and for an unimplemented-but-`.healthKit` type, missing-field and missing-device-name
+handling); `TypeMapperSleepStageTests` (6) — unknown stage + zero-length segment in one
+session (three segments emitted, not four), a dedicated overlapping-segments scenario (a
+short segment fully nested inside a preceding one is suppressed, not doubled), bounds-clamping
+on both edges, an all-dropped session, and missing/malformed `sessionPayload`;
+`TypeMapperOutOfRangeTests` (9) — negative steps, HR 0/400/negative, HR at 190 and exactly at
+the 300 boundary (accepted) vs. 300.01 (dropped), non-positive weight;
+`TypeMapperPropertyTests` (3, one parameterized over 3 windows) — mapper never emits
+`end < start` across all four P0 decision paths including a deliberately reversed window, plus
+an exhaustive-switch placeholder documenting the WP-11 "fraction outputs stay 0...1" pattern
+for whenever `MappedUnit` gains a fraction case; `TypeMapperHealthKitMappingTests` (7,
+`#if canImport(HealthKit)`) — confirms `map(_:)` wraps each golden decision into a real
+`HKQuantitySample`/`HKCategorySample` with the right `HKQuantityType`/`HKUnit`/`HKQuantity`/
+dates/metadata, the `MappedSleepStage`-vs-real-enum cross-check, and that `.localOnly`/`.skip`/
+out-of-range decisions pass through `map(_:)` unchanged.
+**MainActor-isolation gotcha (anticipated per the task brief, and hit as expected):**
+`GoogleDataType.writability` is a *computed* property in CoreModel, which — like SyncKit —
+opts into `.defaultIsolation(MainActor.self)` (architecture.md §3), so it is itself
+MainActor-isolated, unlike `GoogleDataPoint`/`DataSource`'s plain *stored* properties (both
+structs are explicitly `nonisolated`, per WP-05). Resolved the same way WP-06's
+`HealthKitAuth.resolveSampleType` already did: left `TypeMapper.decide`/`.map` at their
+implicit MainActor isolation (no `nonisolated` annotation) rather than fighting it, so reading
+`point.dataType.writability` inside them needs no `await` — same-actor synchronous access.
+Hit a second, related instance while writing `SleepSessionDecoding.swift`: the closure passed
+to `JSONDecoder.dateDecodingStrategy = .custom` is a synchronous, non-actor-isolated closure
+type, so a MainActor-isolated `date(from:)` helper couldn't be called from inside it at all
+(not even with `await`, since the closure isn't `async`) — this one *required* an explicit
+`nonisolated` (on the whole `SleepSessionDecoding` enum, plus `nonisolated` on the
+`SleepSessionWire`/`Segment` structs so their compiler-synthesized `Decodable` conformance —
+`InferIsolatedConformances` — is itself nonisolated and callable from the nonisolated decode
+path), rather than the "leave it MainActor-isolated" resolution used everywhere else in this
+package. **Deviations from the plan's illustrative sketch:** (1) `GoogleDataPoint`'s real
+shape (`id, dataType: GoogleDataType, start, end, source: DataSource, values: [String: Double],
+sessionPayload: Data?`) matches the plan's prose description closely, but `source.deviceDisplayName`
+is `String?`, not a non-optional `String` — handled by carrying `nil` through
+`MappedMetadata.sourceDevice` rather than coercing it. (2) The plan's `MappedObject` sketch is
+a single flat enum wrapping real `HK*` types directly; built `MappedDecision` (HealthKit-free)
+underneath it instead, per this WP's own explicit instruction to provide a HealthKit-free
+representation for unit-testability — `MappedObject`/`TypeMapper.map(_:)` still exist exactly
+as specified, `TypeMapper.decide(_:) -> MappedDecision` is additive, not a replacement. (3) Did
+not touch `Packages/SyncKit/Sources/SyncKit/HealthKit/` at all (read-only, per scope) and did
+not touch any other package. **Verification performed in this session:** `swift test -Xswiftc
+-warnings-as-errors` in `Packages/SyncKit` — **56 tests / 8 suites, 0 failures, 0 warnings**
+(22/3 pre-existing WP-06 tests + 34/5 new); then re-ran the same command in each of
+`Packages/CoreModel` (15/6), `Packages/Secrets` (14/3), `Packages/GoogleHealthClient` (35/7),
+and `Packages/CoachKit` (1/0) without editing any of them — all five still pass together, 0
+failures, 0 warnings across the board. **Deliberately deferred:** distance/bodyFat/HRV/SpO2/
+etc. (`.healthKit` rows beyond the P0 four — WP-11), Exercise→`HKWorkout` (WP-12),
+food/hydration correlations (WP-13), and any actual counting of dropped/out-of-range points
+(WP-09's `SyncEngine`, which owns `SyncState.itemCount`) — all as scoped.
+
+## WP-08 · HealthKitWriter
+
+Built `Packages/SyncKit/Sources/SyncKit/HealthKitWriter/` as three new files, all guarded
+`#if canImport(HealthKit)` except the pure error/report types, mirroring WP-06's
+`HealthKitAuth.swift` posture rather than WP-07's pure/impure split — WP-08's whole job is
+the real save/delete/query mechanics, so there's no HealthKit-free "decision layer" to
+carve out the way `MappedDecision` was for TypeMapper. **`HealthKitWriterTypes.swift`**
+(no HealthKit import, always compiles) — `HealthKitWriterError` (`.workoutsNotYetImplemented`,
+`.underlying(String)`, matching `HealthKitAuthError`'s redaction posture) and
+`AppDataWipeReport` (`[String: Int]` keyed by `HKObjectType.identifier`, plus a `.total`),
+deliberately HealthKit-free so both are unit-testable without importing HealthKit at all.
+**`HealthStoreProtocol.swift`** — `protocol HealthStoreProtocol` (save, existingExternalIDs,
+deleteObjects(ofType:externalIDs:), deleteAllAppData(ofType:)) plus `HealthKitStore`, the
+real `HKHealthStore`-wrapping conformer. **`HealthKitWriter.swift`** — the public
+orchestration class apps/`SyncEngine` (WP-09) hold: `existingExternalIDs(type:start:end:)`,
+`save(_:)`, `delete(externalIDs:type:)` + a generic `delete(externalIDs:types:)` multi-type
+overload, `deleteAllAppData(types:)`, and `saveWorkout(_:)` (the required WP-12 stub — always
+throws `.workoutsNotYetImplemented` rather than silently no-op-ing). Every write/delete
+method is typed-throws `HealthKitWriterError`, matching `HealthKitAuth`'s house style.
+**Critical design correction made before writing any production code (see
+`HealthStoreProtocol.swift`'s header for the full writeup):** an early design that had the
+protocol pass raw `NSPredicate`/`HKQuery` objects through (closer to the plan's illustrative
+"`HKQuery.predicateForObjects(...)`" phrasing) was rejected once actually working through
+how `MockHealthStore` would conform to it — HealthKit's predicate factory methods return
+opaque, HealthKit-private `NSPredicate` subclasses that only a real `HKHealthStore`'s query
+engine can evaluate (`.evaluate(with:)` against an in-memory array is unsupported), and
+`HKSource` has no public initializer, so a mock could never fabricate a "foreign app" source
+to prove delete-by-source doesn't touch it. So `HealthStoreProtocol` is one level higher:
+each method names the HealthKit-semantic operation needed (existence-by-window,
+delete-by-external-ID, delete-by-this-app's-own-writes) rather than how to query for it;
+`HealthKitStore` is the only place real `HKQuery` predicates get built, and
+`MockHealthStore` (test target) implements identical semantics against a plain in-memory
+array with an explicit `isAppWritten` bookkeeping flag standing in for `HKSource`
+attribution. This is the single biggest deviation from the plan's literal sketch, and is
+exactly the kind of "signatures are starting points, not contracts" call the handoff
+protocol anticipates — the *behavior* WP-08 asks for (batched existence checks, scoped
+deletes, HK entitlement-free unit testing) is preserved, arguably better served, than a
+literal `NSPredicate`-passing seam would have been. **Existence-query strategy (WP-08 step
+2, D4):** `existingExternalIDs(ofType:start:end:)` combines HealthKit's date-range
+predicate (`HKQuery.predicateForSamples(withStart:end:options:)`), a metadata-key-*existence*
+predicate (`HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeyExternalUUID)` — no
+`allowedValues:`, since this method's signature is a time window, not a candidate-ID list)
+and a same-app-source predicate (`HKQuery.predicateForObjects(from: .default())`) into one
+`NSCompoundPredicate`, run through exactly **one** `HKSampleQuery` (limit
+`HKObjectQueryNoLimit`, bridged to async/await via `withCheckedThrowingContinuation` since
+the newer `HKSampleQueryDescriptor<Sample>` requires a concrete `Sample: HKSample` generic
+fixed at compile time and doesn't fit this method's runtime-erased `HKSampleType` parameter)
+— literally one HK query per (type, window), per D4's invariant. The brief's suggested
+`allowedValues:` predicate form *is* used, just in `deleteObjects(ofType:externalIDs:)`
+instead: there, unlike the window-based existence check, a concrete candidate external-ID
+set already exists, so `HKQuery.predicateForObjects(withMetadataKey:allowedValues:)` lets
+HealthKit do the membership filtering server-side in the same single call — and needs no
+date window at all, which is exactly what D13.4's retroactive cleanup needs (a conflicting
+sample can be anywhere in the lookback window, not a contiguous range). Both predicate
+forms named in the WP-08 brief ended up used, each in the call site its actual signature
+fits, rather than picking one and falling back on the other. **Genericity for WP-12b/WP-35
+(explicit brief requirement):** neither `delete(externalIDs:types:)` nor
+`deleteAllAppData(types:)` hardcodes today's four P0 types (steps/heart rate/weight/sleep)
+anywhere — both take the type list as a caller-supplied parameter, so WP-12b's retroactive
+conflict cleanup (which may need to sweep a mix of quantity samples and an `HKWorkout`
+sharing one external-ID set) and WP-35's disconnect-and-wipe flow (which by then will cover
+far more than four types, per WP-11/12/13) can reuse the exact same primitives without any
+change here. `AppDataWipeReport` reports an explicit entry (including an explicit `0`) per
+requested type, satisfying WP-35's "per-type progress" wording. **Verified real-API
+compilation two ways, both required since this session had no HealthKit entitlement or
+booted/authorized simulator (same constraint WP-06 hit):** (1) `xcrun swiftc -typecheck`
+scratch checks of the full protocol/adapter/writer/mock design against the real
+`HealthKit.framework` for both `arm64-apple-macos26.0` and `arm64-apple-ios26.0-simulator`
+targets, with this repo's exact `Package.swift` flags (`-swift-version 6
+-strict-concurrency=complete -default-isolation MainActor -enable-upcoming-feature
+NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances`) —
+zero errors, zero warnings on both targets, confirming every real HealthKit API used
+(`HKHealthStore.save`/`.delete`/`.deleteObjects(of:predicate:)` — all as genuine
+completion-handler-derived `async throws` methods, not guesses — `HKSampleQuery`,
+`HKQuery.predicateForObjects(withMetadataKey:)`/`(withMetadataKey:allowedValues:)`/`(from:)`,
+`HKQuery.predicateForSamples(withStart:end:options:)`, typed throws on a protocol
+requirement) exists and behaves as documented before writing a single production file; (2)
+in-repo `xcodebuild build -scheme SyncKit -destination 'generic/platform=iOS Simulator'` —
+**BUILD SUCCEEDED**, compiling this WP's three new Sources files for real
+`arm64-apple-ios26.0-simulator` **and** `x86_64-apple-ios26.0-simulator` slices — followed
+by `xcodebuild build-for-testing -scheme SyncKit -destination 'generic/platform=iOS
+Simulator'` from a fully clean DerivedData — **TEST BUILD SUCCEEDED**, additionally
+compiling `MockHealthStore.swift`, `HealthKitWriterTests.swift`, and
+`HealthKitStoreIntegrationTests.swift` (all real `HKQuantitySample`/`HKObjectType`
+construction) for iOS. **Tests** (`Tests/SyncKitTests/HealthKitWriter/`, 17 new): with
+`MockHealthStore` (no HealthKit entitlement, no real `HKHealthStore` — `HealthKitWriterTests.swift`,
+16 tests) — batch composition (one `save` call for a 3-sample batch, empty batch never
+calls the store), existence-check window/metadata/type filtering (in-window found,
+out-of-window excluded, no-metadata excluded, cross-type leakage excluded), the literal
+dedupe-diff pattern from WP-09's own sketch (seed one existing ID, confirm it's the only
+one `existingExternalIDs` reports, filter it out of an incoming batch, confirm exactly the
+two new ones get saved and the store ends up with 3 total), delete-by-externalID (removes
+only the target, doesn't cross-contaminate a same-ID sample of a different type, empty-ID
+delete never calls the store, the generic multi-type overload sums correctly across types),
+deleteAllAppData (removes only `isAppWritten` entries and leaves a "foreign" seeded sample
+alone, reports an explicit `0` for a type with nothing to delete, sweeps multiple types
+independently), the workouts stub throwing without ever touching `save`, and error
+propagation from the underlying store passing through unchanged. Plus one gated real-store
+integration suite (`HealthKitStoreIntegrationTests.swift`, 1 test) exercising the exact
+test-plan.md §3 sequence — save → `existingExternalIDs` finds it → the diff correctly
+skips a re-save → delete-by-externalID removes only the target — against the real
+`HealthKitStore`/`HKHealthStore`, gated by a synchronous, side-effect-free
+`.enabled(if: hasRealHealthKitStepWriteAuthorization())` trait (checks
+`HKHealthStore.isHealthDataAvailable()` and `authorizationStatus(for:) == .sharingAuthorized`
+for step count — never attempts a write itself) that skips with a clear explanatory message
+rather than failing, the exact same pattern WP-03's `KeychainSecurityBackendTests.swift`
+established for its real-Keychain round-trip. **Confirmed it actually skips (not silently
+passes) in this session:** `swift test` reports `➜ Test "real store: save ->
+existingExternalIDs finds it -> ..." skipped: "Real HealthKit write authorization for
+HKQuantityTypeIdentifierStepCount is not currently granted to this test process..."` —
+expected, since `HKHealthStore.isHealthDataAvailable()` is `false` on this repo's macOS test
+host (WP-06/07 both already found this) and HealthKit authorization can only ever be
+granted through interactive UI, never headlessly. **This is flagged as required follow-up,
+not a blocker:** re-run `HealthKitStoreIntegrationTests` on a real device or simulator where
+FitBridge has already been launched once and the user granted write access to steps via the
+real onboarding flow (WP-10) — nothing in this session's mock-store coverage or the two
+compilation checks above suggests it will behave differently, but it has not actually
+executed against a real store end-to-end. **Verification performed in this session:**
+`swift test -Xswiftc -warnings-as-errors` in `Packages/SyncKit` from a clean `.build` —
+**73 tests / 10 suites, 0 failures, 0 warnings** (72 pass + 1 expected skip; 56 pre-existing
+WP-06/07 tests + 17 new); then re-ran the same command in each of `Packages/CoreModel`
+(15/6), `Packages/Secrets` (14/3), `Packages/GoogleHealthClient` (35/7), and
+`Packages/CoachKit` (1/0) without editing any of them — all five still pass together, 0
+failures, 0 warnings across the board. **Deviations from the plan's literal text (handoff
+protocol's "blocked?" clause):** (1) the protocol-shape correction described above (the
+single biggest deviation, fully justified above and in-code); (2) `deleteAllAppData` and
+the multi-type `delete` overload take an explicit `types:` parameter rather than the plan's
+bare `deleteAllAppData()` — deliberate, per the WP-08 brief's own explicit instruction not
+to over-fit to today's four P0 types; (3) added typed throws (`HealthKitWriterError`) to
+every `HealthStoreProtocol`/`HealthKitWriter` method, matching `HealthKitAuth`'s house style,
+where the plan's sketch shows plain (unlabeled) throwing signatures. **Deliberately
+deferred, as scoped:** `HKWorkoutBuilder`/Exercise→`HKWorkout` integration (WP-12, behind
+the explicit stub); the real diff/upsert orchestration against `SyncState`/`LocalSample`
+(WP-09's `SyncEngine`, which will hold a `HealthKitWriter` and call
+`existingExternalIDs`/`save` per page); D13's actual watch-priority conflict resolution
+(WP-12b) — this WP only had to make sure `delete`'s primitives are generic enough for
+WP-12b to reuse, not implement the resolver itself.
+
+## WP-09 · SyncEngine v1
+
+Built `Packages/SyncKit/Sources/SyncKit/SyncEngine/` as three new files, following the
+pure/impure split every prior SyncKit WP established (`HealthKitIdentifierClassifier`/
+`HealthKitObjectTypeResolver`; `MappedDecision`/`MappedObject`;
+`HealthKitWriterTypes.swift`/`HealthKitWriter.swift`): **`SyncEngineTypes.swift`**
+(no HealthKit import, always compiles) — `SyncConfiguration` (initialWindow 7d,
+defaultLookback 72h, sleepLookback 7d, `lookback(for:)`), `SyncClock`/`SystemSyncClock`
+(mirrors `GoogleHealthClient`'s own `TokenClock` seam exactly, same doc-comment lineage),
+`GoogleReconcileClient` (a narrow protocol over just `reconcile(type:since:until:pageToken:)`
+— WP-09's "the Google client, or a narrow protocol over it, so tests can stub it"),
+`ConflictFiltering`/`IdentityConflictFilter` (the WP-12b hook, see below), and
+`SyncStatus`/`SyncOutcome` (the per-type result report `syncAll` collects). **All
+protocol requirements are declared `nonisolated`**, matching every existing protocol in
+this codebase (`HTTPSession`, `TokenClock`, `BackoffSleeper`, `JitterSource`), so that a
+conforming type's own actor affinity (or lack of one) never blocks satisfying the
+requirement. **`GoogleHealthClient+SyncEngine.swift`** — `extension GoogleHealthClient:
+GoogleReconcileClient {}` with zero additional code (the real client's
+`reconcile(type:since:until:pageToken:)` signature already matches exactly; its default
+`pageToken: String? = nil` doesn't block conformance) — not a retroactive conformance,
+since SyncKit (this module) owns the protocol even though it doesn't own
+`GoogleHealthClient`, the identical pattern WP-04/05 already used for
+`KeychainStore+GoogleTokenStoring.swift`. **`SyncEngine.swift`** (`#if canImport(HealthKit)`,
+matching `HealthKitWriter.swift`'s own guard, since it needs `HKObject`/`HKSampleType` and
+`HealthKitWriter` itself) — `public actor SyncEngine`, constructed with an injected
+`GoogleReconcileClient`, `HealthKitWriter`, `ModelContainer`, `SyncClock` (default
+`SystemSyncClock`), `SyncConfiguration` (default), and `ConflictFiltering` (default
+`IdentityConflictFilter`); `sync(type:)` (in-flight-deduplicated, single-execution
+coalescing), `syncAll(types:)` (sequential, continues past a failing type), and the private
+`performSync`/`processPage`/`fetchOrCreateSyncState`/`upsertLocalSample` pipeline.
+
+**Exactly what `SyncState.itemCount` counts (WP-09's explicit "decide and document" ask,
+and the wiring of WP-07's deferred out-of-range counting):** one Google *data point*
+processed in a run, counted exactly once regardless of how many HK samples it expanded
+into (a multi-stage sleep session's whole array of category segments is one item, not N).
+Each processed point contributes to the run's count in exactly one of three ways: (1)
+**newly written** to HealthKit — its external ID wasn't already present per the batched
+existence diff (architecture.md D4); an already-present point contributes 0, so an
+idempotent re-run never inflates this component; (2) **`.localOnly` upserted** into
+`LocalSample` — every upsert counts, insert or update, since `LocalSample` (unlike the HK
+path) has no "already present, skip" branch in this WP; (3) **`.skip`** — an
+unmapped/unimplemented/out-of-range point `TypeMapper` dropped, wiring up WP-07's
+explicitly deferred "counting is the SyncEngine's job" note. `SyncState.itemCount` itself
+is a **running cumulative total across the type's entire history**, incremented by a run's
+count only when that run's *entire* window succeeds; `SyncOutcome.itemCount` (the
+in-memory per-run report) still reports whatever partial count was reached before a
+mid-window failure (informational — useful for a future sync-log/diagnostics UI, WP-18),
+but that partial count is never added to the persisted `SyncState.itemCount`.
+
+**Cursor semantics implemented exactly per architecture.md D3 and this WP's brief:**
+`window.start = (SyncState.lastSyncedAt ?? now − initialWindow) − lookback(type)`,
+`window.end = now`; `SyncState.lastSyncedAt` only advances to `window.end` when every page
+of the run's fetch succeeds. A page's writes/upserts are **not rolled back** on a later
+page's failure — they're idempotent (D4), so leaving them in place and simply not
+advancing the cursor means the next run safely re-pulls the *entire* window (confirmed by
+the "failure mid-pagination" test asserting the retried run's first-page request has an
+identical `since`/`until` to the failed run's). **One deliberate efficiency improvement
+over the plan's illustrative per-page phrasing** ("`existing = writer.existingExternalIDs(
+type, pageWindow)`" inside the per-page loop): this implementation calls
+`existingExternalIDs` **once per (type, whole-run window)**, before the page loop starts,
+then threads the resulting `Set<String>` through `processPage` by `inout`, growing it with
+each page's newly-written IDs. This still satisfies D4's "batched, never per-sample"
+invariant (arguably more strictly — one query per run instead of one per page) and
+additionally guards against a point appearing in two pages of the same window being
+double-written within a single run; flagged here per the handoff protocol's "signatures
+are starting points" clause since it's a structural, not just cosmetic, deviation from the
+sketch.
+
+**In-flight de-duplication** (architecture.md §3's `Set<GoogleDataType>` note,
+implemented as `[GoogleDataType: Task<SyncOutcome, Never>]` instead of a bare `Set` so
+concurrent callers *coalesce onto the same result* rather than merely being turned away):
+`sync(type:)` checks `inFlight[type]` and, if present, awaits that existing `Task`'s
+`.value` instead of starting a new pipeline run; the check-and-insert has no `await`
+between them, so under actor serialization it's race-free by construction (same pattern
+`GoogleAuthManager.coalescedRefresh()` already established in `GoogleHealthClient`).
+`syncAll(types:)` awaits `sync(type:)` once per type in a plain sequential `for` loop
+(architecture.md's "predictable quota usage") and can't be interrupted by one type's
+failure, since `sync(type:)` itself never throws — every failure becomes an `.error`
+`SyncOutcome`, not a thrown error.
+
+**`LocalSample` upsert is fetch-then-mutate, not a blind re-insert:** even though WP-02's
+own tests confirmed SwiftData's `.unique` attribute behaves as last-write-wins on a raw
+re-insert, `upsertLocalSample` explicitly fetches any existing row by `externalID` first
+and mutates its fields in place when found. This is deliberate, not incidental: a blind
+re-insert would reconstruct the whole `LocalSample` object fresh each time, silently
+resetting `linkedWatchWorkoutUUID` to `nil` on every routine re-sync — a field WP-12b's
+`ConflictResolver` will set later (architecture.md D13.2) and that this WP must never
+clobber. `LocalSample.payloadJSON`'s shape (`SyncEngineLocalPayload`, private to
+`SyncEngine.swift`) is a WP-09-invented minimal `Codable` capturing `GoogleDataPoint`'s
+fields verbatim — not a spec handed down by the plan (WP-14 owns the real per-type
+payload schema for the in-app "Not in Apple Health" badge rows and may replace this
+shape entirely; flagged in that file's own doc comment).
+
+**The `ConflictFiltering` hook (WP-09's explicit ask: "a pass-through/identity stage...
+so WP-12b can install real watch-priority conflict resolution without changing
+SyncEngine's structure"):** implemented as a protocol (`resolve(_:MappedObject, for:
+GoogleDataPoint) async -> MappedObject`) rather than a closure, operating on `MappedObject`
+— the already-HK-wrapped decision — because that's exactly the representation immediately
+upstream of the existence-diff/write step it sits in front of, and exactly what D13.2's
+real resolver needs to downgrade (`.quantity`/`.category` → `.localOnly`, when a Google
+Exercise session overlaps a watch workout). Declared `async` even though this WP's own
+`IdentityConflictFilter` never suspends, specifically because WP-12b's real resolver will
+need to consult `WatchCoverageIndex` (HealthKit reads, inherently async) — avoids a
+signature-breaking change later. A second test conformer
+(`SuppressingConflictFilter`, test-file-local) proves the seam is genuinely wired between
+mapping and the write step, not just accepted-and-ignored.
+
+**MainActor-isolation gotcha (anticipated by WP-07's own TypeMapper.swift header, and hit
+exactly as predicted):** `actor SyncEngine` is its own, distinct actor — **not** MainActor
+— per architecture.md §3's explicit list (`actor SyncEngine`, `actor GoogleAuthManager`,
+`actor KeychainStore`), unlike almost everything else in this package (`TypeMapper`,
+`HealthKitObjectTypeResolver`, `HealthKitWriter`, …), which are all implicitly
+MainActor-isolated because none of them declares its own isolation and the package
+default is `.defaultIsolation(MainActor.self)`. Crossing from `SyncEngine` into that
+MainActor-isolated code — `type.writability`, `HealthKitObjectTypeResolver.sampleType(
+for:)`, `TypeMapper.map(_:)` — needed an explicit `await` at each call site, exactly the
+"standard cross-actor call syntax for a synchronous isolated function" WP-07's own header
+called out by name as the expected resolution for "a future actor-isolated caller (e.g.
+WP-09's actor SyncEngine)." **One additional instance not previously seen in this
+package,** surfaced only once real code was compiled rather than reasoned about: a private
+`Codable` struct (`SyncEngineLocalPayload`, used only inside `upsertLocalSample`) failed
+to compile with "main actor-isolated initializer ... in a synchronous actor-isolated
+context" and "main actor-isolated conformance of 'SyncEngineLocalPayload' to 'Encodable'
+cannot be used in actor-isolated context" — resolved by marking the whole struct
+`nonisolated`, the same fix WP-05 applied to `GoogleDataPoint`/`DataSource` and WP-07
+applied to `SleepSessionDecoding`'s wire types. Verified empirically, not just reasoned
+through: `swift build` was run after every isolation-sensitive design choice in this WP,
+and this was the *only* compile error the whole implementation actually produced.
+
+**Test-support environment note, not previously hit by WP-04/05/08's own lock-protected
+mocks:** `NSLock.lock()`/`.unlock()` are unavailable from `async` contexts on this
+toolchain (a push toward async-safe scoped locking) — `MockGoogleReconcileClient.reconcile`
+(this WP's `GoogleReconcileClient` test double, `Tests/SyncKitTests/SyncEngine/
+MockGoogleReconcileClient.swift`, styled after `MockHealthStore`'s `@unchecked Sendable`
+class-with-manual-locking pattern but needing *real* thread-safety since the concurrency
+tests genuinely call it from overlapping tasks) had to use `NSLock.withLock { }` instead
+of bare `lock()`/`unlock()` around its mutable-state block, called synchronously before
+the `await gate.enter()` rendezvous point. Flagged here for whichever future WP's test
+double next reaches for `NSLock` inside an `async` function.
+
+**Concurrency test determinism (`concurrentSyncCallsForTheSameTypeCoalesceIntoOneExecution`):**
+rather than racing raw `Task`s against timing and hoping, this test uses a small
+actor-based rendezvous primitive (`AsyncGate`, same test file's directory) that lets the
+first `sync(type:)` call's underlying `reconcile` invocation suspend indefinitely until
+released; the test awaits `gate.waitUntilEntered()` — which can only return after
+`sync(type:)`'s synchronous "check-and-insert into `inFlight`" prefix has already run,
+guaranteeing the in-flight entry is populated — before spawning two more concurrent
+`sync(type:)` callers and only then opening the gate. A couple of `Task.yield()` calls
+plus a 20ms real sleep are added purely as extra scheduling insurance on top of that
+deterministic guarantee (belt-and-suspenders, not the primary correctness argument); none
+of this touches `SyncEngine`'s own production code path, which never calls `Task.sleep`
+or `Date()` directly (only `clock.now()`, per this WP's constraint).
+
+**Deliberately out of scope, as scoped:** `client.dailyRollup` is never called anywhere in
+`SyncEngine` — architecture.md D1 frames it as used "additionally" for daily-summary
+types, and the plan's own WP-09 sketch only shows `client.reconcile`; whichever future WP
+needs daily-rollup-sourced aggregates will need to decide whether that's a second call
+inside this same pipeline or a separate path. `WatchCoverageIndex`/the real
+`ConflictResolver` (WP-12b), `BackfillCoordinator` (WP-15), and background scheduling
+(WP-16) are all unstarted, as expected — this WP only had to make the `ConflictFiltering`
+seam exist and default to identity.
+
+**Tests** (`Tests/SyncKitTests/SyncEngine/`, 14 new, all passing, plus 2 new test-support
+files with no `@Test`s of their own — `MockGoogleReconcileClient.swift`/`AsyncGate.swift`'s
+`actor AsyncGate` lives in the same file, and `TestSyncClock.swift`): lookback window
+computed correctly against the virtual clock, both 72h non-sleep and 7d sleep, and
+re-anchored on `lastSyncedAt` (not the initial-window bootstrap) on a second sync;
+idempotency (a second identical run writes 0 new HK objects, with fixture timestamps
+deliberately close to "now" so they still fall inside the *second* run's narrower,
+already-anchored window — a first attempt using `TypeMapperFixtures`' distant default
+dates caught a real test-design bug: those timestamps fell outside the shrunk second-run
+window, which would make a *correct* implementation look broken); `.localOnly` upsert
+(no duplicate `LocalSample` rows across two runs of the same point); itemCount composition
+(2 new writes + 1 out-of-range skip in one mixed page ⇒ 3, cross-checked against the
+persisted `SyncState.itemCount`); cursor advances only on full-window success across
+three consecutive runs (success → failure → success), with `lastSyncedAt`/`lastStatus`/
+`lastError` asserted after each; all pages of a paginated response consumed (2 pages, both
+recorded with an identical request window); failure mid-pagination leaves the cursor
+untouched and is safely retried (page 1's write persists across the failed run; the retry
+re-requests the identical window and only page 2's point is newly written); a
+late-arriving sample (old timestamp, new external ID) inside the lookback window gets
+written on the next run; concurrent `sync(type:)` calls for the same type coalesce into
+exactly one execution (`mock.calls.count == 1` across 3 concurrent callers, all three
+returned outcomes `==`); `syncAll` runs sequentially (one call per type, in `types`'
+order), continues past one failing type, and reports accurate per-type results; the
+identity conflict filter passes mappings through unchanged; a custom conflict filter can
+suppress a write before the existence-diff/write step, rerouting it to `LocalSample`
+instead — proving WP-12b's seam is real. **Verification performed in this session:**
+`swift test -Xswiftc -warnings-as-errors` in `Packages/SyncKit` from a clean `.build` —
+**87 tests / 11 suites, 0 failures, 0 warnings** (73/10 pre-existing WP-06/07/08 tests +
+14/1 new); re-ran the full suite 5 consecutive times (including the concurrency test) to
+check for flakiness — stable every time. Then re-ran `swift test -Xswiftc
+-warnings-as-errors` in each of `Packages/CoreModel` (15/6), `Packages/Secrets` (14/3),
+`Packages/GoogleHealthClient` (35/7), and `Packages/CoachKit` (1/0) without editing any of
+them — all five packages still pass together, 0 failures, 0 warnings across the board.
+**No public API gaps found in WP-05/WP-07/WP-08's deliverables** — `GoogleHealthClient
+.reconcile`, `TypeMapper.map(_:)`/`.decide(_:)`, and `HealthKitWriter.existingExternalIDs`/
+`.save`/`.delete` all had exactly the shape this WP needed; the one seam this WP had to
+add on top (`GoogleReconcileClient`) is additive (an extension conformance), not a change
+to any existing file outside `SyncEngine/`. **Deliberately deferred, as scoped:** WP-12b's
+real `ConflictResolver`/`WatchCoverageIndex`, WP-15's `BackfillCoordinator`, WP-16's
+background scheduling, and WP-18's sync log/diagnostics (this WP's `SyncOutcome.errorMessage`
+is exactly the redacted-string shape that future log will consume, per architecture.md D11 —
+no raw error objects or health values are ever stored in `SyncState.lastError`, only
+`String(describing:)` of the typed error).
+
+## WP-10 · Minimal dashboard + onboarding (P0 UI)
+
+Built the full app-target UI slice under `FitBridgeApp/`, replacing WP-01's placeholder
+`ContentView`. **`DI/`** (4 new files) — `LaunchConfiguration` (reads
+`ProcessInfo.processInfo.arguments` for `-UITestStubGoogle`/`-UITestSeedData`, both of
+which force an in-memory `ModelContainer`); `AppEnvironment` (`@Observable @MainActor`,
+holds `ModelContainer`, `HealthKitAuth`, `GoogleAuthManager`, `SyncEngine`, and a
+`consentCoordinator`, injected into the SwiftUI environment via `.environment(_:)` in
+`FitBridgeApp.swift`, read back via `@Environment(AppEnvironment.self)`); a small
+app-owned `GoogleConsentCoordinating` protocol (`LiveGoogleConsentCoordinator` wraps the
+real `GoogleAuthManager.beginConsent`; `StubGoogleConsentCoordinator` used only under
+`-UITestStubGoogle`) so onboarding code never depends on the concrete actor directly; and
+`StubGoogleReconcileClient` (conforms to SyncKit's `GoogleReconcileClient`, returns empty
+pages) so the stubbed first-sync step never touches the network either. **`Onboarding/`**
+(7 files) — `OnboardingFlowView` (plain enum-driven state machine: welcome →
+healthKitPermission → googleConsent → firstSync, with `healthKitUnavailable` and
+`workspaceUnsupported` as explicit side states per architecture.md §6) plus one view per
+step. **`Dashboard/`** (2 files) — `DashboardView` (`@Query(sort: \SyncState.dataType)`,
+a "Sync now" toolbar button calling `syncEngine.syncAll(types:)`, and a data-freshness
+header quoting architecture.md §1's "~15 min" framing) and `SyncTypeRow` (one row per P0
+type: status icon, item count, last-synced via `RelativeDateTimeFormatter` ("Synced 9m
+ago"), error text when `lastStatus == "error"`). `project.yml` gained a `FitBridgeUITests`
+(`bundle.ui-testing`) target and scheme entry (none existed before this WP).
+
+**Real API shapes discovered vs. the plan's illustrative sketches (all read from source
+in `Packages/*/Sources` before writing any app code, per the handoff protocol):**
+`GoogleAuthManager.beginConsent(scopes:presentationContextProvider:)` is `@MainActor`,
+iOS-only, and requires a real `ASWebAuthenticationPresentationContextProviding` — not a
+bare closure; `HealthKitAuth.requestWrite(for:)` throws typed `HealthKitAuthError` and
+never reports *per-type* denial (HK resolves the completion handler regardless of which
+toggles the user leaves on, per that type's own doc comment) — per-type denial is only
+ever visible later via `writeStatus(for:)`, which is what the dashboard's status icons
+read, not the onboarding screen itself; `SyncEngine.syncAll(types:)` returns
+`[SyncOutcome]` and **never throws** (every per-type failure becomes an `.error`
+outcome), so no onboarding/dashboard code needed a catch around it; `CoreModel
+.makeContainer(inMemory:)` matched the plan exactly. `HealthKitWriter()`'s convenience
+init and `GoogleHealthClient`'s real conformance to `GoogleReconcileClient` (an existing
+zero-code extension from WP-09) meant the non-stubbed dependency wiring needed no adapter
+code at all beyond construction.
+
+**Two genuine SwiftUI/Swift-6 pitfalls found only by actually running `xcodebuild test`
+against the simulator, not by reading/reasoning about the code (both are documented
+inline at their fix sites for the next WP to avoid re-discovering them):**
+
+1. **A container's `.accessibilityIdentifier` overrides its children's own, more specific
+   identifiers**, rather than coexisting with them. `SyncTypeRow`'s outer `VStack` had
+   `.accessibilityIdentifier("dashboard.row.<type>")` while its `Image`/`Text` children
+   each had their own `.itemCount`/`.lastSynced`/`.error` identifiers; a real accessibility
+   snapshot (captured via `xcresulttool export attachments` after a failing test run)
+   showed *every* child reporting the container's identifier, not its own. Confirmed a
+   second time identically in `WelcomeView` (the "Get Started" button's own
+   `onboarding.welcome.continue` identifier was being reported as plain `onboarding.welcome`,
+   the VStack's identifier). Fixed by removing every container-level identifier that wraps
+   children needing their own (`SyncTypeRow`, `WelcomeView`, `HealthKitPermissionView`,
+   `GoogleConsentView`, `WorkspaceUnsupportedView`, `FirstSyncView`) — only leaf elements
+   carry identifiers now; `SyncTypeRow`'s "row exists" check uses the display-name `Text`'s
+   `.name` identifier instead of a row-level one.
+2. **`Text("\(someInt)")` (inline string-interpolation literal) resolves to
+   `Text(LocalizedStringKey)`, whose interpolation silently applies locale-aware
+   thousands-grouping to interpolated numbers** — `SyncTypeRow`'s item-count label rendered
+   `"4,213"` instead of `"4213"` for a seeded fixture of exactly that value, confirmed via
+   the real accessibility snapshot. Fixed by building a plain `String` first
+   (`String(state?.itemCount ?? 0)`) and passing that to `Text(_:)`, which picks the
+   non-localized `Text(String)` overload; applied the same fix to `FirstSyncView`'s
+   per-type summary line.
+
+**HealthKit's real "Health Access" system sheet, driven for real in the onboarding UI
+test (not stubbed — only Google is stubbed by `-UITestStubGoogle`, per the WP-10 brief's
+own framing):** discovered its actual structure only by inspecting a failing test's
+accessibility snapshot — one scrollable list of per-category switches (all off initially,
+`UIA.Health.Write.<Type>.SwitchCell`), a "Turn On All" cell
+(`UIA.Health.AuthSheet.AllCategoryButton`), and "Allow"/"Don't Allow" buttons
+(`UIA.Health.Allow.Button`/`.DoNotAllow.Button`) — critically, **"Allow" starts disabled
+and stays disabled until at least one switch is on**, so a test that taps "Allow" before
+"Turn On All" is a silent, permanent no-op (this is exactly what happened on the first
+attempt: the sheet never dismissed, `requestWrite(for:)` never resolved, and every
+downstream assertion timed out). Fixed by tapping "Turn On All" first, then "Allow" —
+`OnboardingUITests.handleHealthKitPermissionSheetIfPresented`. Also notable: this sheet is
+hosted in a *different process ID* in the accessibility snapshot than the app itself, yet
+is directly queryable via plain `app.*` element queries (not a cross-process alert an
+`addUIInterruptionMonitor` is needed for) — the interruption-monitor approach this file
+started with was dead code that never fired and was removed. SwiftUI's `List` is also
+lazily rendered (backed by a `UICollectionView`); the freshness header pushes the last two
+P0 rows below the fold on first layout, so both UI tests scroll (`app.swipeUp()`) before
+asserting on `weight`/`sleep` rows.
+
+**Tests, both required by WP-10's "Tests" line, both passing via a real
+`xcodebuild test`, not typecheck-only:** `OnboardingUITests
+.testOnboardingHappyPathWithStubbedGoogle` — launches with `-UITestStubGoogle`, drives
+the real HealthKit permission sheet, taps the stubbed "Sign in with Google" (resolves in
+~200ms with no network call), waits through the stubbed first sync (empty pages, `.ok`
+status), and asserts all 4 P0 rows render on the dashboard. `DashboardUITests
+.testDashboardRendersPerTypeStatesFromSeededContainer` — launches with `-UITestSeedData`
+(seeds `steps`/`heart_rate` as `.ok` with distinct item counts, `weight` as never-synced
+`.idle`, `sleep` as `.error` with a specific message) directly into `DashboardView` (no
+onboarding, no HealthKit/Google calls at all) and asserts every per-type state renders,
+including that the error text is present rather than swallowed (architecture.md's "errors
+render rather than vanish").
+
+**Verification performed in this session, on a real simulator, not settled for
+typecheck-only (WP-10's explicit ask):** toolchain — Xcode 26.4.1, iOS 26.4.1 simulator
+runtime, "iPhone 17 Pro" simulator (`50EC4D33-A8EE-4A91-9617-8B2B757B971D`).
+`xcodegen generate` → `xcodebuild build -scheme FitBridge -destination 'id=...'` —
+**BUILD SUCCEEDED**, zero warnings, zero errors. `xcodebuild build-for-testing` —
+**TEST BUILD SUCCEEDED**, including the new `FitBridgeUITests` target (which needed its
+own `SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated` override in `project.yml` — the
+project-wide `MainActor` default, correct for the app/onboarding/dashboard code, conflicts
+with `XCTestCase`'s own `nonisolated` lifecycle methods; individual test methods that
+touch `XCUIApplication` are annotated `@MainActor` explicitly instead). `xcodebuild test
+-scheme FitBridge -destination 'id=...'` (the full scheme, both `FitBridgeTests` and
+`FitBridgeUITests`) — **TEST SUCCEEDED**: `FitBridgeTests` 1/1 (WP-01's placeholder,
+untouched), `FitBridgeUITests` 2/2 (`DashboardUITests`, `OnboardingUITests`), 0 failures,
+0 warnings, run three times total during debugging (the last one clean end-to-end).
+Re-ran `swift test -Xswiftc -warnings-as-errors` in all five packages after finishing —
+still 152/38 combined (CoreModel 15/6, Secrets 14/3, GoogleHealthClient 35/7, SyncKit
+87/11, CoachKit 1/0), 0 failures, 0 warnings, confirming this WP touched nothing under
+`Packages/`.
+
+**Deviations from the plan's literal text (handoff protocol's "blocked?" clause):** (1)
+the two accessibility-identifier/`Text` pitfalls above weren't anticipated by the plan at
+all (it just says "verified via view/accessibility identifiers") — the fixes are
+structural (no container-level identifiers double as both a row/screen marker *and* a
+parent of more specific ones) rather than a one-line patch, so future WPs adding new
+screens should follow the same "identifiers only on leaves" rule. (2) The onboarding UI
+test drives the real HealthKit permission sheet rather than stubbing it — WP-10's own
+"Tests" line only names `-UITestStubGoogle`, and test-plan.md §5 explicitly says "handle
+system alert" for this exact smoke test, so this is the plan's intent, not a deviation,
+but it does make this one test the slowest and most environment-sensitive in the suite
+(a fresh simulator with no prior HealthKit authorization for FitBridge is required for
+the "Turn On All" flow to appear at all; a simulator where authorization was already
+granted skips the sheet entirely and the test's waits simply time out quickly and
+proceed — both paths were exercised in this session via `xcrun simctl uninstall`
+between runs). (3) `GoogleAuthConfig.clientID` is a placeholder string
+(`"GOOGLE_IOS_CLIENT_ID_PENDING_P-1.3"`) — still gated on the same human prerequisite
+WP-04/05 flagged; the real (non-stubbed) `LiveGoogleConsentCoordinator`/`GoogleAuthManager
+.beginConsent` path is fully wired and compiles/builds for iOS, but pressing "Sign in with
+Google" in a real (non-`-UITestStubGoogle`) run will fail against Google's real servers
+until that client exists — exactly the same outstanding gap WP-04/05 already documented,
+now reachable from the UI rather than just the package API. (4) Did not implement a
+dedicated UI test for the Workspace-unsupported or HealthKit-unavailable screens (not
+required by WP-10's "Tests" line, which names only the happy path + dashboard states) —
+both screens exist and are wired into `OnboardingFlowView`'s state machine
+(`WorkspaceUnsupportedView`, `HealthKitUnavailableView`), reachable from
+`GoogleConsentCoordinator`'s `.workspaceUnsupported` result and `HealthKitAuth.isAvailable
+== false` respectively, but neither path was exercised by an automated test in this
+session (the Workspace path needs a real Workspace-account consent response to trigger
+naturally; the HK-unavailable path needs an iPad destination, out of scope per
+`project.yml`'s `TARGETED_DEVICE_FAMILY: "1"` for P0). **P0 exit criterion (WP-10's "Done
+when," architecture.md's phase goal) — structurally complete, real-account portion still
+gated on P-1.3 as always:** the full pipeline (HealthKit permission → Google consent →
+`syncEngine.syncAll` → dashboard reading `SyncState`) is wired end-to-end and provably
+runs without crashing or losing errors (both UI tests exercise it against real HealthKit
+and a stubbed-but-structurally-identical Google path); a real Fitbit/Pixel account's data
+flowing through `GoogleHealthClient`'s real network path remains untestable without the
+still-outstanding Google Cloud OAuth client (P-1.3) and Google Health API verification —
+exactly the gap every prior WP touching `GoogleHealthClient`/`GoogleAuthManager` already
+flagged, not a new one introduced here.
+
+## WP-11 · TypeMapper full table
+
+Extended `Packages/SyncKit/Sources/SyncKit/TypeMapper/` with the thirteen remaining rows
+of base-knowledge.md §5, additive to WP-07's existing `MappedDecision`/`MappedObject`
+pattern (no restructuring): distance (`.distanceWalkingRunning`, meters — already
+normalized mm→m upstream by GoogleHealthClient's WP-05 `UnitNormalizer`, reused rather
+than duplicated), floors (`.flightsClimbed`, count), active energy burned
+(`.activeEnergyBurned`, kilocalorie), resting heart rate (`.restingHeartRate`,
+count/min, reusing WP-07's `heartRateValidRange`), heart rate variability (routed to
+`.localOnly`, **not** `heartRateVariabilitySDNN` — see below), oxygen saturation
+(`.oxygenSaturation`, fraction), respiratory rate (`.respiratoryRate`, count/min), VO2
+Max + Run VO2 Max (both → `.vo2Max`, a composed mL/(kg·min) unit), body fat
+(`.bodyFatPercentage`, fraction), height (`.height`, meters), blood glucose
+(`.bloodGlucose`, two unit variants — see below), core body temperature
+(`.bodyTemperature`, degreeCelsius), and hydration (`.dietaryWater`, liters). Routing
+continues to dispatch off `GoogleDataType.writability` exactly as WP-07 established
+(`decideHealthKitMapped`'s switch only gained cases; the outer `decide(_:)` routing
+shape is untouched). Every new emitted sample goes through the same shared
+`metadata(for:)` helper WP-07 wrote, so `HKMetadataKeyExternalUUID`/
+`"fitbridge.externalID"`/`"fitbridge.sourceDevice"` stamping is automatic and was never
+re-implemented per type.
+
+**New `MappedUnit` cases** (`MappedTypes.swift`) — `.meter`, `.kilocalorie`, `.fraction`,
+`.degreeCelsius`, `.liter`, `.milligramsPerDeciliter`, `.millimolesPerLiter`,
+`.vo2MaxUnit` — each verified against the **real** `HKUnit`/`HKQuantityTypeIdentifier`
+factory APIs before being written into `MappedObject.swift`'s `makeHKUnit()`, not
+guessed: read `HKUnit.h` directly from the iOS 26.4 simulator SDK
+(`/Applications/Xcode.app/.../iPhoneSimulator26.4.sdk/.../HealthKit.framework/Headers/HKUnit.h`)
+to confirm every factory selector (`gramUnitWithMetricPrefix:`, `moleUnitWithMetricPrefix:
+molarMass:`, `percentUnit` — "0.0-1.0" per its own doc comment, confirming `.percent()`
+is exactly the `0...1` fraction unit HealthKit itself calls "percent" — `literUnit`,
+`degreeCelsiusUnit`, the `HKUnitMolarMassBloodGlucose` `#define` constant
+`180.15588000005408`), then ran a scratch `xcrun swiftc -typecheck` against the real
+`HealthKit.framework` (arm64-apple-ios26.0-simulator target) exercising every planned
+`HKUnit`/`HKQuantityTypeIdentifier` expression verbatim (`HKUnit.literUnit(with:
+.milli).unitDivided(by: HKUnit.gramUnit(with: .kilo).unitMultiplied(by: .minute()))` for
+VO2 Max; `HKUnit.gramUnit(with: .milli).unitDivided(by: HKUnit.literUnit(with: .deci))`
+for mg/dL; `HKUnit.moleUnit(with: .milli, molarMass: HKUnitMolarMassBloodGlucose)
+.unitDivided(by: .liter())` for mmol/L; `.percent()`, `.degreeCelsius()`, `.liter()`,
+`.meter()`, `.kilocalorie()`) — zero errors before any of it was written into
+production code. VO2 Max's unit is built via `HKUnit`'s multiply/divide combinators
+(same pattern as WP-07's `.countPerMinute`) rather than `HKUnit(from: "mL/(kg*min)")`
+string parsing, to avoid depending on an unverified unit-string grammar.
+
+**HRV — pinned per this WP's explicit instruction, not silently guessed:**
+base-knowledge.md §3/§5 names Google's type only as "Heart Rate Variability" and pairs
+it with `heartRateVariabilitySDNN` in the mapping table, but documents neither an
+algorithm, a field name, nor a unit anywhere — there is no way to *confirm* SDNN from
+this doc. CoreModel's writability table (`GoogleDataType.heartRateVariability
+.writability`) still declares `"HKQuantityTypeIdentifierHeartRateVariabilitySDNN"` as an
+*available* target (per WP-02's own note that the table records availability, not a
+write decision — the identical pattern already used for `totalCalories`/
+`basalEnergyBurned`), but `TypeMapper.decideHeartRateVariability` unconditionally
+returns `.localOnly`, ignoring that available target. The reasoning (flagged explicitly
+in-code as **out-of-band knowledge, not sourced from base-knowledge.md**): Fitbit's own
+HRV metric is widely documented elsewhere in the wearable industry as an overnight
+**RMSSD**-based figure — a different statistic over a different window than SDNN, not a
+rescaled version of the same number. Writing an RMSSD value into
+`heartRateVariabilitySDNN` would silently mislabel data in Apple Health under a claim
+this mapper cannot verify, which is worse than not writing it. Tested explicitly
+(`heartRateVariabilityRoutesToLocalOnlyNotSDNN`, `TypeMapperGoldenTests.swift`, and its
+HK-layer counterpart in `TypeMapperHealthKitMappingTests.swift`) — the test asserts
+*both* that `decide(_:)` returns `.localOnly` *and* that CoreModel's writability table
+still declares the SDNN target, so this reads as a deliberate override, not a routing
+bug. The raw `rmssd`-named field (fixture-only; `decideHeartRateVariability` never reads
+it) is preserved verbatim via `GoogleDataPoint` for WP-09/WP-14 to persist to
+`LocalSample.payloadJSON`, just never written to HealthKit under an unconfirmed label.
+
+**Energy split — no basal invented, per this WP's explicit instruction:** only
+`.activeEnergyBurned` → `HKQuantityTypeIdentifierActiveEnergyBurned` is implemented.
+`.totalCalories` (a distinct Google type CoreModel's writability table pairs with
+`HKQuantityTypeIdentifierBasalEnergyBurned`, per §5's positional "Active Energy Burned /
+Total Calories → activeEnergyBurned / basalEnergyBurned" reading) is deliberately **not**
+handled — it falls through `decideHealthKitMapped`'s `default` case to `.skip`, with an
+in-line doc comment explaining why: no fixture/payload evidence anywhere in this session
+separates an active-only reading from a basal-only one, and writing Google's
+undifferentiated total into `basalEnergyBurned` would fabricate a real basal-only
+reading Google never actually reported. Tested explicitly (`totalCaloriesRoutesToSkip`).
+If a future WP finds a real payload that *does* separate active from basal, this is the
+one function (`decideHealthKitMapped`'s `default` case) to revisit.
+
+**Blood glucose — two fixture variants, no assumed conversion:** base-knowledge.md
+documents neither Google's field name(s) for this type nor which of the two
+clinically-standard units (US mg/dL vs. most-of-the-rest-of-the-world mmol/L) it
+reports, so per this WP's explicit instruction, both variants were built rather than
+guessing one: `TypeMapper.decideBloodGlucose` checks for a `mg_per_dl` field first, then
+`mmol_per_l`, and emits the corresponding `MappedUnit` — the field's *presence* signals
+the unit, not a separate unit-indicator string (an assumption, flagged as such in-code
+and in both fixtures' `_comment`s, since neither payload shape is confirmed).
+Critically, **no conversion is ever performed between the two units** — each is passed
+straight through in its own `HKUnit`; if a real payload turns out to use a single field
+name gated by a separate unit indicator instead, `decideBloodGlucose` is the one place to
+update. Both variants have golden tests (`bloodGlucoseMgDLGolden`/
+`bloodGlucoseMmolLGolden`) and real-`HKQuantity` HK-mapping tests confirming the exact
+composed units above.
+
+**SpO2 / body fat — percentage→fraction conversion, tested explicitly, never clamped:**
+base-knowledge.md doesn't pin down whether Google's wire payload for either field is
+already a `0...1` fraction or a `0...100` percentage; assumed `0...100` (every
+consumer-facing SpO2/body-fat reading either platform surfaces to a user is shown as a
+percentage) and converted via `/ 100.0` in `decideOxygenSaturation`/`decideBodyFat` —
+**never** passed through unconverted, since HealthKit requires `0...1`
+(base-knowledge.md §5 "fraction 0-1 in HK!"/"fraction in HK"). Both `decide` functions
+guard their raw input to a shared `percentageValidRange = 0.0...100.0` *before*
+converting, so an out-of-range input (negative, or >100 — clearly not a percentage) is
+**dropped, not clamped** — structurally guaranteeing the emitted fraction lands in
+`0...1` rather than merely hoping it does. Tests: golden tests assert the exact `97 →
+0.97`/`22 → 0.22` conversion for both types; a dedicated property test
+(`fractionOutputsAlwaysStayInUnitInterval`, parameterized over `[0, 22, 55.5, 97, 100]`)
+asserts every `.fraction`-unit sample's value is in `0...1`; a companion property test
+(`outOfRangePercentageIsDroppedNotClamped`, parameterized over `[-5, -0.01, 100.01,
+250]`) asserts out-of-range inputs are dropped, not force-clamped into range.
+
+**Other unit/payload assumptions, each flagged in-code and in the corresponding JSON
+fixture's `_comment` (base-knowledge.md documents none of Google's exact wire field
+names beyond the `<data_type>.<field>` nesting convention itself, per §2):** floors'
+`count`, active energy burned's `kcal`, resting HR's `bpm` (a full-day interval, per
+base-knowledge.md §3's "D" = Daily record type), respiratory rate's `breathsPerMinute`,
+VO2 Max/Run VO2 Max's `value`, height's `meters`, core body temperature's `celsius`, and
+hydration's `liters` are all invented field names, chosen for consistency with the
+existing four P0 fixtures' naming style (short, HealthKit-unit-matching) — none are
+confirmed against a real payload, same posture WP-07 already established for weight's
+`mass` field and flagged as "unconfirmed pending real API access" (P-1.3). Height,
+respiratory rate, and core body temperature each got a generous, documented
+sensor/unit-mismatch guard range (`heightValidRange`, `respiratoryRateValidRange`,
+`coreBodyTemperatureValidRange`), same "comfortably wider than any plausible reading"
+philosophy as WP-07's `heartRateValidRange`. Respiratory rate's base-knowledge.md §5 row
+("Respiratory Rate") has no exact §3 name match either — resolved identically to WP-02's
+own note, to the sample-level `respiratoryRateSleepSummary` case (the "Daily Respiratory
+Rate" sibling remains `.skip`, unimplemented, per CoreModel's existing table). Hydration
+Log is a Session (Se) record type per base-knowledge.md §3, but WP-11 only asks for a
+plain `dietaryWater` quantity mapping (not a session/correlation structure the way
+Exercise/Food are) — treated like the other Sample-shaped scalar fixtures rather than
+built with `SleepSessionDecoding`-style nested payload parsing; flagged in-code in case
+a future WP finds hydration logs actually arrive as multi-entry sessions.
+
+**Fixtures added** under
+`Packages/GoogleHealthClient/Tests/GoogleHealthClientTests/Fixtures/GoogleHealth/`
+(fixtures only, per this WP's scope — no GoogleHealthClient *source* or test `.swift`
+files touched, so these are documentation/spec artifacts SyncKit's own
+`TypeMapperFixtures.swift` mirrors as literal `GoogleDataPoint` values, exactly as WP-07
+did for the four pre-existing ones): `floors.json`, `active-energy-burned.json`,
+`daily-resting-heart-rate.json`, `heart-rate-variability.json`,
+`oxygen-saturation.json`, `respiratory-rate.json`, `vo2-max.json`, `run-vo2-max.json`,
+`height.json`, `body-fat.json`, `blood-glucose-mgdl.json`, `blood-glucose-mmol.json`,
+`core-body-temperature.json`, `hydration-log.json` — fourteen files, each with a
+`_comment` recording its envelope/field-name assumptions, matching the existing
+fixtures' documentation convention exactly. `distance.json` (WP-05) was reused as-is, no
+new distance fixture needed. **No `GoogleDataPoint` field gap was found** — every new
+type's payload fits the existing flat `values: [String: Double]` shape (or, for blood
+glucose, two mutually-exclusive keys within it); nothing required a new field on
+`GoogleDataPoint` itself, so there is no gap to report against GoogleHealthClient's
+scope.
+
+**Fixed one now-stale WP-07 test:** `TypeMapperGoldenTests
+.unimplementedHealthKitTypeRoutesToSkipForNow` used `.distance` as its "not yet
+implemented" exemplar; since this WP implements distance, that exact test would have
+started asserting the *wrong* thing (a valid distance point would now map to
+`.quantity`, not `.skip`) rather than failing loudly — caught by actually building the
+test target (not just reading), fixed by switching the exemplar to `.exercise`
+(WP-12's job, still genuinely unimplemented) and updating its doc comment.
+
+**Tests** (`Packages/SyncKit/Tests/SyncKitTests/TypeMapper/`, all in existing WP-07
+files, none new — following this WP's explicit instruction not to write a parallel
+suite): `TypeMapperGoldenTests.swift` gained one golden test per new row (distance,
+floors, active energy burned, resting HR, HRV-routes-to-localOnly, SpO2 with explicit
+percent→fraction assertion, respiratory rate, VO2 Max, Run VO2 Max, height, body fat with
+explicit percent→fraction assertion, blood glucose mg/dL, blood glucose mmol/L, core
+body temperature, hydration) plus `totalCaloriesRoutesToSkip`, and had its stale
+`.distance` exemplar fixed as above. `TypeMapperFixtures.swift` gained one builder
+function per new type (fourteen total, `vo2MaxPoint` parameterized over `dataType` to
+cover both VO2 Max Google types with one function). `TypeMapperPropertyTests.swift`:
+`neverEmitsSampleWithEndBeforeStart` and `reversedWindowIsAlwaysDropped` now exercise
+all seventeen implemented `.healthKit` rows (not a second parallel test), and the
+placeholder `fractionTypedUnitPropertyIsNotYetApplicable` test — WP-07's own
+deliberately-exhaustive-switch tripwire, written specifically so adding a fraction case
+without a property test alongside it would fail to compile — was replaced by the two
+real tests described above (`fractionOutputsAlwaysStayInUnitInterval`,
+`outOfRangePercentageIsDroppedNotClamped`); confirmed this tripwire actually fired
+before the fix (`swift build --build-tests` failed with "switch must be exhaustive,
+add missing case: '.meter'..." etc. until the placeholder was replaced), i.e. WP-07's
+guard rail worked exactly as designed. `TypeMapperOutOfRangeTests.swift` gained
+per-type negative/implausible-value coverage for every new type with a numeric guard
+(distance, floors, active energy, resting HR, respiratory rate, VO2 Max, height, blood
+glucose both units, core body temperature, hydration) plus a missing-both-fields blood
+glucose case. `TypeMapperHealthKitMappingTests.swift` gained one real-`HKQuantitySample`
+test per new HK-mapped type (confirming exact `HKQuantityType`/`HKQuantity`
+unit+value/dates) plus the HRV-maps-to-`.localOnly`-through-`map(_:)` counterpart to the
+golden-layer test.
+
+**Verification performed in this session:** `swift test -Xswiftc -warnings-as-errors`
+from a clean `.build` in `Packages/SyncKit` — **133 tests / 11 suites, 0 failures, 0
+warnings** (87/11 pre-existing WP-06/07/08/09 tests + 46 new; no new suite files, all
+additions extend the six existing WP-07 TypeMapper test files, per this WP's scope);
+same command in `Packages/GoogleHealthClient` — **35 tests / 7 suites, 0 failures, 0
+warnings**, unchanged from WP-05 (only JSON fixtures were added, no source or test
+`.swift` changes, so the count is identical — confirms the fixture additions didn't
+perturb anything). Then re-ran `swift test -Xswiftc -warnings-as-errors` in each of
+`Packages/CoreModel` (15/6), `Packages/Secrets` (14/3), and `Packages/CoachKit` (1/0)
+without editing any of them — all five packages still pass together, 0 failures, 0
+warnings across the board, 198 tests total combined. **Deviations from the plan's
+literal text (handoff protocol's "blocked?" clause):** (1) HRV and `.totalCalories` both
+deliberately don't use the HealthKit target CoreModel's writability table declares for
+them — fully justified above, and exactly the kind of call WP-02's own note anticipated
+TypeMapper making; (2) several field names (floors/energy/respiratory-rate/VO2Max/
+height/core-body-temp/hydration) are invented, not confirmed, same posture as WP-07's
+weight-unit note — flagged per-field above and in each fixture's `_comment` rather than
+silently assumed; (3) fixed a pre-existing WP-07 test that this WP's own distance
+implementation would have silently made incorrect (see above) — a necessary,
+narrowly-scoped edit to an existing SyncKit test file, not a new deviation from this
+WP's own instructions. **Deliberately deferred, as scoped:** Exercise → `HKWorkout`
+(WP-12), Food/Nutrition Log → `HKCorrelation(.food)` (WP-13), and any real confirmation
+of the field-name/unit assumptions above against a live payload — all still gated on
+P-1.3 (the outstanding Google Cloud OAuth client), exactly the recurring gap every prior
+WP touching `GoogleHealthClient`/`GoogleAuthManager` has already flagged.
+
+## WP-12 · Exercise → HKWorkout
+
+Built the Exercise → `HKWorkout` pipeline entirely within `Packages/SyncKit`, following
+the exact pure/impure split every prior SyncKit WP established. **New files:**
+**`TypeMapper/ExerciseSessionDecoding.swift`** — a `nonisolated` wire struct
+(`ExerciseSessionWire`) decoded from `GoogleDataPoint.sessionPayload` via a plain
+`JSONDecoder`, mirroring WP-07's `SleepSessionDecoding.swift` precisely (Exercise is a
+Session (Se) record type per base-knowledge.md §3, exactly like Sleep). **`HealthKitWriter/
+WorkoutBuilding.swift`** — `protocol WorkoutBuilding` (`beginCollection`/`addSamples`/
+`addMetadata`/`endCollection`/`finishWorkout`, all `async throws`) and
+`protocol WorkoutBuilderFactory`, abstracting the real, concrete `HKWorkoutBuilder` class
+(not itself protocol-based) so `HealthKitWriter.saveWorkout(_:)` is testable without a
+HealthKit entitlement — the exact same seam-over-a-concrete-API rationale
+`HealthStoreProtocol.swift` (WP-08) already established for `HKHealthStore`.
+`HKWorkoutBuilderAdapter`/`HealthKitWorkoutBuilderFactory` are the real production
+conformers. Extended **`TypeMapper/MappedTypes.swift`** with `MappedWorkoutActivityType`
+(a HealthKit-free enum of 12 named buckets + `.other`) and `MappedWorkout` (activity type,
+start/end, optional distance-in-meters/energy-in-kilocalories, `MappedMetadata`), and gave
+`MappedDecision` a new `.workout(MappedWorkout)` case. Extended **`TypeMapper/
+TypeMapper.swift`** with `decideExercise(_:)` and the required explicit
+`googleExerciseActivityTypes: [String: MappedWorkoutActivityType]` table (13 entries, see
+below), wired into `decideHealthKitMapped`'s switch under an explicit `case .exercise`
+(previously falling through to `default` → `.skip`, exactly the stub WP-11's own entry
+flagged as this WP's job). Extended **`TypeMapper/MappedObject.swift`** with
+`MappedObject.workout(MappedWorkout)` (deliberately **not** `#if canImport(HealthKit)`-
+guarded, since `MappedWorkout` itself is HealthKit-free — unlike `.quantity`/`.category`,
+`TypeMapper.map(_:)`'s `.workout` arm is a pure pass-through of the same value, not a
+real-`HKWorkout` construction — see below for why), `MappedWorkoutActivityType
+.makeHKWorkoutActivityType()` (switches to the real, *named* `HKWorkoutActivityType` case
+— deliberately not a raw-`Int` mirror the way `MappedSleepStage` mirrors
+`HKCategoryValueSleepAnalysis`, since `HKWorkoutActivityType` has ~80 cases across many OS
+versions and hand-mirroring raw values would be far more error-prone), and changed
+`MappedMetadata.makeHKMetadataDictionary()` from `fileprivate` to internal (module-default)
+access so `HealthKitWriter.swift`, a different file in the same module, can reuse it for
+the workout's own metadata and its attached distance/energy samples.
+
+**Why `HKWorkout` isn't constructed the way `HKQuantitySample`/`HKCategorySample` are:**
+unlike those two (plain, synchronous initializers), a real `HKWorkout` can only be built
+through `HKWorkoutBuilder`'s async, store-backed `beginCollection → add(samples) →
+endCollection → finishWorkout` flow (its own direct initializers are deprecated, per
+implementation-plan.md's own note) — there is no synchronous "just construct the object"
+path the way WP-07's `MappedObject.swift` established for quantity/category samples. So
+`TypeMapper.map(_:)`'s `.workout` case is a pure pass-through of the same `MappedWorkout`
+value `decide(_:)` produced; the *real* HealthKit-object-construction layer for workouts
+is **`HealthKitWriter.saveWorkout(_:)`** itself (HealthKitWriter.swift) — this is what the
+task's "keep the decision layer separate from the HK-object-construction layer" instruction
+meant concretely for Exercise, and it's why `saveWorkout`'s signature changed from the
+WP-08 stub's `([HKObject]) throws` to `(MappedWorkout) async throws -> HKWorkout?`.
+
+**`HealthKitWriter.saveWorkout(_:)` — the real implementation, replacing the WP-08 stub:**
+requests a `WorkoutBuilding` from the injected `workoutBuilderFactory` (activity type via
+`makeHKWorkoutActivityType()`, `device: nil` — Google's source device is carried as
+`fitbridge.sourceDevice` metadata, not a real `HKDevice`, matching this codebase's existing
+posture of never fabricating one), then `beginCollection(at: workout.start)` →
+(if present) builds `HKQuantitySample`s for `HKQuantityTypeIdentifierDistanceWalkingRunning`
+(meters) and `HKQuantityTypeIdentifierActiveEnergyBurned` (kilocalories), each stamped with
+the workout's own metadata, and `addSamples(_:)`s them together → `addMetadata(_:)` (the
+workout's own D4 metadata: `HKMetadataKeyExternalUUID`/`fitbridge.externalID`/
+`fitbridge.sourceDevice`, via the now-internal `makeHKMetadataDictionary()`) →
+`endCollection(at: workout.end)` → `finishWorkout()`, returned as-is
+(`@discardableResult ... -> HKWorkout?`). **Return-value contract, taken directly from
+`HKWorkoutBuilder.finishWorkout()`'s own doc comment** ("If both workout and error are nil
+then finishing the workout succeeded but the workout sample is not available because the
+device is locked"): a `nil`, non-throwing result is a **documented success**, not an error
+— `saveWorkout` never converts it into a thrown failure, and `WorkoutSavingTests.swift`
+has a dedicated test (`nilFinishResultWithoutAnErrorIsStillSuccess`) proving this.
+`HealthKitWriterError.workoutsNotYetImplemented` was removed (its own WP-08 doc comment
+said "never remove this without replacing it with a real implementation" — done); every
+`saveWorkout` failure now surfaces as `.underlying(String(describing:))`, matching every
+other method in this file. `HealthKitWriter`'s primary initializer gained a
+`workoutBuilderFactory: WorkoutBuilderFactory = HealthKitWorkoutBuilderFactory(healthStore:
+HKHealthStore())` parameter (default value, so every pre-existing call site — all 17
+WP-08 tests plus WP-09's `SyncEngine` construction sites — keeps compiling unchanged); the
+`healthStore:`-convenience initializer now builds the workout-builder factory from the same
+shared store.
+
+**The Google exercise-type table — 13 entries, invented and flagged for reconciliation**
+(this WP's honesty-flag requirement, same posture as WP-11's HRV/blood-glucose notes):
+base-knowledge.md §5's mapping-table row for Exercise says only "~13 Google types are
+coarse" — it names **zero** actual wire-string values anywhere in the document. The table
+below is a reasonable, documented invention based on common Fitbit/Google Fit exercise
+categories, **not** a confirmed enumeration of the real Google Health API's actual enum
+values, and **must be reconciled against real payloads once P-1.3 (the Google Cloud OAuth
+client) unblocks real API access** — flagged here, in `TypeMapper.swift`'s
+`googleExerciseActivityTypes` doc comment, and in `MappedWorkoutActivityType`'s own doc
+comment (MappedTypes.swift):
+
+| Wire string (invented) | `MappedWorkoutActivityType` | Real `HKWorkoutActivityType` |
+|---|---|---|
+| `"run"` | `.running` | `.running` |
+| `"walk"` | `.walking` | `.walking` |
+| `"bike"` | `.cycling` | `.cycling` |
+| `"swim"` | `.swimming` | `.swimming` |
+| `"hike"` | `.hiking` | `.hiking` |
+| `"weights"` | `.traditionalStrengthTraining` | `.traditionalStrengthTraining` |
+| `"yoga"` | `.yoga` | `.yoga` |
+| `"elliptical"` | `.elliptical` | `.elliptical` |
+| `"rowing"` | `.rowing` | `.rowing` |
+| `"hiit"` | `.highIntensityIntervalTraining` | `.highIntensityIntervalTraining` |
+| `"stair_climbing"` | `.stairClimbing` | `.stairClimbing` |
+| `"core_training"` | `.coreTraining` | `.coreTraining` |
+| `"workout"` (Google's own generic/unspecified bucket) | `.other` | `.other` |
+| *(anything else — genuinely unrecognized)* | `.other` (default) | `.other` |
+
+Any wire string not in the table — not just `"workout"`, which is itself an explicit entry
+that also targets `.other` — defaults to `.other` via a plain `?? .other` dictionary
+lookup, per this WP's explicit "default bucket .other for anything unrecognized"
+instruction; both paths (`"workout"` and a truly-unknown string) are golden-tested
+independently so the default-fallback behavior is proven, not just implied by the explicit
+entry. The real `HKWorkoutActivityType` case names (12 named buckets + `.other`, all
+verified to exist against the real SDK — see "Verification" below) were read directly from
+`HealthKit.framework/Headers/HKWorkout.h` on this machine's iOS 26.4 simulator SDK, not
+guessed; `HKWorkoutActivityType` itself has on the order of 80 cases across OS versions
+(American Football through UnderwaterDiving, plus several `API_DEPRECATED` ones like plain
+`.dance`), so this table intentionally picks a conservative dozen unambiguous,
+long-stable cases rather than trying to cover every nuance a real payload might eventually
+need — broadening it later (e.g. splitting `"bike"` into indoor/outdoor cycling, adding a
+dedicated dance/pilates/martial-arts bucket) is a one-line dictionary addition, not a
+structural change.
+
+**Exercise session wire-shape assumptions (all flagged, none confirmed against a real
+payload — same posture as every WP-11 field-name note):** decoded fields are
+`"exercise.activity_type"` (String), `"exercise.distance"` (assumed **meters**, not
+millimeters — base-knowledge.md's only confirmed odd-base-unit example is the standalone
+`Distance` Google type's own field, normalized by `UnitNormalizer` keyed specifically to
+`"distance.distance"`; that table doesn't cover Exercise's nested session payload at all,
+and `sessionPayload` is preserved **before** any unit normalization runs, so any
+conversion here is this decoder's own responsibility — chose meters, matching WP-11's
+"height already in meters" precedent, not the millimeter convention; flagged as needing
+reconciliation, and if wrong, only `ExerciseSessionDecoding.swift` needs updating), and
+`"exercise.energy"` (assumed kilocalories, matching WP-11's active-energy-burned "kcal"
+convention). **Duration is deliberately not a separate decoded field** — the session's own
+outer `GoogleDataPoint.start`/`.end` already bound the whole workout (exactly like Sleep),
+and those are precisely the two dates `HKWorkoutBuilder` needs for
+`beginCollection`/`endCollection`; this is a design decision, not an unconfirmed
+assumption, and is documented as such in `ExerciseSessionDecoding.swift`'s header.
+A negative distance/energy reading is dropped (nil'd) rather than kept, but — unlike an
+out-of-range heart rate, which drops the *entire* point — an implausible auxiliary
+attachment doesn't invalidate the whole workout session, so only that one optional field is
+nil'd, not the whole decision; tested explicitly
+(`negativeDistanceAndEnergyAreDroppedNotKept`). A missing/malformed `sessionPayload`, or one
+missing the `activity_type` field entirely, routes to `.skip` (never crashes), matching
+Sleep's precedent exactly. **Deviation from the WP-07/11 fixture convention, explicitly
+scope-driven:** unlike every WP-07/11 fixture, there is **no** companion JSON fixture under
+`Packages/GoogleHealthClient/Tests/GoogleHealthClientTests/Fixtures/GoogleHealth/`
+documenting these wire-shape assumptions via a `"_comment"` key — WP-12's stated scope is
+`Packages/SyncKit` only ("do NOT touch ... GoogleHealthClient"), so the assumptions are
+documented instead in `ExerciseSessionDecoding.swift`'s header and
+`TypeMapperFixtures.swift`'s `exercisePoint(...)` doc comment. Flagged here per the
+handoff protocol so whoever eventually adds a real GoogleHealthClient exercise fixture
+knows to reconcile it against these two files rather than re-deriving the shape from
+scratch.
+
+**Necessary cross-file compile fixes outside TypeMapper/HealthKitWriter (flagged per the
+handoff protocol's "if you believe another module must change, stop and report" clause —
+reported here, and fixed, since leaving them broken would fail this WP's own required
+`swift test` gate for the whole package):** adding `MappedObject.workout`/
+`MappedDecision.workout` makes two pre-existing **exhaustive** switches elsewhere in
+`SyncKit` (added by WP-09, not touched by this WP's nominal TypeMapper/HealthKitWriter
+scope) fail to compile unless given a new arm. (1) `SyncEngine.swift`'s
+`processPage(_:knownExternalIDs:context:)` switches exhaustively over `MappedObject` to
+route `.quantity`/`.category` into the write batch and `.localOnly`/`.skip` elsewhere —
+added `case .workout: skipCount += 1`, documented inline as a deliberate no-op-for-now:
+wiring workouts through `SyncEngine`'s actual incremental pipeline (a
+`HKObjectType.workoutType()` existence-diff before calling the new `writer.saveWorkout(_:)`,
+since workouts don't flow through `writer.save(batch)` at all) is genuinely out of this
+WP's scope — arguably WP-12b's job, since D13's watch-priority conflict resolution should
+run before a Google Exercise session is even considered for writing as an `HKWorkout` (a
+watch-covered session should never reach `saveWorkout` in the first place). **This is
+flagged here as required follow-up, not silently left undone.** (2)
+`SyncEngineTests.swift`'s `SuppressingConflictFilter.resolve(_:for:)` (a test-only
+`ConflictFiltering` conformer) has the same kind of exhaustive switch — added
+`case .workout: return mapped` (pass-through, matching `.localOnly`/`.skip`'s existing
+arm), since that test predates workouts and isn't about them. Both fixes are one arm each,
+behavior-neutral for every pre-existing test (all of which pre-date `.workout` and never
+produce it), and were required purely to keep the shared `MappedObject`/`MappedDecision`
+enums' exhaustiveness satisfied — not a scope creep into WP-09's actual sync logic.
+
+**Verification that the real `HKWorkoutBuilder` API surface matches this design, performed
+*before* writing production code** (same "confirm against the real SDK, don't guess"
+discipline WP-06/07/08/11 all established): read
+`HealthKit.framework/Headers/HKWorkoutBuilder.h` and `HKWorkout.h` directly from the iOS
+26.4 simulator SDK on this machine, confirming `beginCollectionWithStartDate:completion:` /
+`addSamples:completion:` / `addMetadata:completion:` / `endCollectionWithEndDate:completion:`
+/ `finishWorkoutWithCompletion:` all bridge to Swift `async throws` via
+`NS_SWIFT_ASYNC_NAME`/`NS_SWIFT_ASYNC_THROWS_ON_FALSE`, and confirming `finishWorkout()`'s
+own doc comment's "nil without error is still success" contract; then ran a scratch
+`xcrun swiftc -typecheck` (in a disposable directory under this session's scratchpad,
+never part of the repo) against the real `HealthKit.framework` for
+`arm64-apple-ios26.0-simulator`, using this repo's exact `Package.swift` flags
+(`-swift-version 6 -strict-concurrency=complete -default-isolation MainActor
+-enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature
+InferIsolatedConformances -warnings-as-errors`) — **zero errors, zero warnings** — for (1)
+the full `beginCollection → addSamples → addMetadata → endCollection → finishWorkout` call
+sequence against a real `HKWorkoutBuilder`, (2) all 13 real `HKWorkoutActivityType` case
+names this table needs (`.running`/`.walking`/`.cycling`/`.swimming`/`.hiking`/
+`.traditionalStrengthTraining`/`.yoga`/`.elliptical`/`.rowing`/
+`.highIntensityIntervalTraining`/`.stairClimbing`/`.coreTraining`/`.other`), and (3) — the
+one genuinely tricky question this WP had to resolve empirically rather than by
+reasoning — whether a test could construct a real `HKWorkout` fixture at all, given every
+`HKWorkout` initializer is `API_DEPRECATED("Use HKWorkoutBuilder", ...)` and this repo
+builds with `-warnings-as-errors`. Confirmed, via a disposable scratch **SwiftPM package**
+(not just a bare `swiftc` script, since the actual failure mode only shows up through
+Swift Testing's macro-generated call site) with a real `import Testing` suite: marking
+**both** the deprecated-initializer-calling helper function **and** the `@Test func` that
+calls it with `@available(*, deprecated, message: ...)` silences the deprecation
+diagnostic entirely, even under `swift test -Xswiftc -warnings-as-errors` — confirmed
+empirically (clean build, test passes) before this pattern was used for real in
+`MockWorkoutBuilder.swift`'s `makeFakeHKWorkoutForTesting`. This is the *only* way to
+fabricate a real, non-nil `HKWorkout` test fixture without a live, authorized
+`HKHealthStore` (that's the entire reason `HKWorkoutBuilder` exists), and it's used
+**exclusively** in test code — production code (`HealthKitWriter.saveWorkout(_:)`) never
+calls a deprecated `HKWorkout` initializer.
+
+**In-repo real-API compilation, per this WP's own required verification path (WP-08's
+precedent — `xcodebuild build -scheme SyncKit -destination 'generic/platform=iOS
+Simulator'`, confirmed the scheme still exists via `xcodebuild -list`):**
+`xcodebuild build -scheme SyncKit -destination 'generic/platform=iOS Simulator'` —
+**BUILD SUCCEEDED**, compiling every new/changed production file
+(`ExerciseSessionDecoding.swift`, `WorkoutBuilding.swift`, the extended `MappedTypes.swift`/
+`TypeMapper.swift`/`MappedObject.swift`/`HealthKitWriter.swift`/`HealthKitWriterTypes.swift`/
+`SyncEngine.swift`) for real `arm64-apple-ios26.0-simulator` **and**
+`x86_64-apple-ios26.0-simulator` slices, zero errors, zero warnings. Then
+`xcodebuild build-for-testing -scheme SyncKit -destination 'generic/platform=iOS
+Simulator'` from the same session — **TEST BUILD SUCCEEDED**, additionally compiling every
+new test file (`TypeMapperExerciseTests.swift`, `MockWorkoutBuilder.swift` — including its
+`@available(*, deprecated)`-guarded real `HKWorkout` fixture helper — `WorkoutSavingTests
+.swift`) for iOS, confirmed warning-free by grepping the full build log for
+`warning:.*\.swift`/`deprecated` (zero matches; the only unrelated `warning:` line in the
+raw log is Xcode's own "Metadata extraction skipped: No AppIntents.framework dependency
+found" notice from the `appintentsmetadataprocessor` tool, not a Swift compiler diagnostic
+and not something `-warnings-as-errors` governs). **What this does *not* verify, same
+limitation WP-06/07/08 already hit and flagged again here:** the full, real
+`HKWorkoutBuilder` flow — `beginCollection`/`addSamples`/`addMetadata`/`endCollection`/
+`finishWorkout` actually executing against a genuinely authorized `HKHealthStore` on a
+booted, HealthKit-authorized simulator or device — was **not** run end-to-end in this
+session (no HealthKit entitlement / authorized simulator available here, the identical
+constraint every prior HealthKit-touching WP recorded). The mock/protocol-seam tests below
+substitute for it, per this WP's own explicit instruction to do exactly that when a real
+authorized store isn't available.
+
+**Tests** (28 new, across three files — two new suites plus extensions to three existing
+ones): **`TypeMapperExerciseTests.swift`** (new suite, HealthKit-free, exercises
+`TypeMapper.decide(_:)` only) — one parameterized golden test over all 13
+`googleExerciseActivityTypes` table rows (`recognizedActivityTypeGolden`, 13 cases in one
+`@Test(arguments:)`), a dedicated unknown-wire-string test proving the `.other` default
+fallback independently of the explicit `"workout"` → `.other` entry
+(`unrecognizedActivityTypeDefaultsToOther`), a full golden check of activity type +
+start/end + distance + energy + metadata together, missing-distance-and-energy-stay-nil,
+negative-distance-and-energy-are-dropped-not-kept, missing-`sessionPayload`-routes-to-skip,
+payload-missing-the-activity-type-field-routes-to-skip, reversed-window-routes-to-skip, and
+missing-device-display-name-stays-nil (13 tests total, one of which fans out to 13 cases —
+26 assertions' worth of coverage from that one file). **`TypeMapperHealthKitMappingTests
+.swift`** (extended, `#if canImport(HealthKit)`) — `everyMappedWorkoutActivityTypeMapsToItsRealHKWorkoutActivityTypeCase`
+(exhaustive over `MappedWorkoutActivityType.allCases`, so a future case added to the enum
+without a matching table entry here is a test failure, not a silent gap — the same
+tripwire-by-construction style WP-07/11's `TypeMapperPropertyTests` fraction-unit guard
+already established) and `exerciseSessionMapsToAWorkoutDecisionThroughMap` (confirms
+`TypeMapper.map(_:)`'s pass-through). **`WorkoutSavingTests.swift`** (new suite,
+`#if canImport(HealthKit)`, against `MockWorkoutBuilder`/`MockWorkoutBuilderFactory`) — the
+required "workout-builder integration test" and "workout dedupe by externalID" per this
+WP's "Tests:" line: `savesFollowTheExactBuilderSequence` (asserts the exact
+`beginCollection → addSamples(2) → addMetadata(...) → endCollection → finishWorkout` call
+order and payload), `requestsTheCorrectRealHKWorkoutActivityType`,
+`attachesDistanceAndEnergyQuantitySamplesWhenPresent` (inspects the real constructed
+`HKQuantitySample`s' types/quantities), `neitherDistanceNorEnergySampleIsAddedWhenBothAreNil`,
+`stampsExternalUUIDAndSourceDeviceMetadataBeforeFinishing`,
+`nilFinishResultWithoutAnErrorIsStillSuccess` (the `finishWorkout()` "device locked" success
+case), `aThrownBuilderErrorPropagatesAsUnderlying`, and — the dedupe-by-externalID pair —
+`aSavedWorkoutIsDiscoverableThroughTheSameExistingExternalIDsMethod` (seeds the mock
+builder's `finishWorkout()` result, built via the test-only deprecated-initializer helper,
+directly into the same `MockHealthStore` the writer holds — mirroring
+`HKWorkoutBuilder.finishWorkout()`'s real documented behavior of saving straight to the
+store, bypassing `HealthStoreProtocol.save(_:)` — then confirms
+`writer.existingExternalIDs(type: HKObjectType.workoutType(), ...)`, the **exact same**
+method every other type already uses, finds it) and
+`callerMustCheckExistingExternalIDsBeforeSavingAgain` (documents/proves that `saveWorkout`
+itself performs no dedupe — exactly like `save(_:)`, the existence-diff is the caller's job)
+plus `noExistingWorkoutsBeforeAnySave` (confirms `HKObjectType.workoutType()` is accepted by
+`existingExternalIDs` at all, not a special-cased no-op). Also extended, minimally:
+**`TypeMapperFixtures.swift`** (`exercisePoint(...)` builder, doc comment explaining the
+missing-companion-JSON-fixture deviation above), **`TypeMapperPropertyTests.swift`** (added
+`.workout` to the exhaustive "never end < start" switch and the reversed-window assertion
+list — now 18 rows, not 17), and removed the now-stale WP-08 stub test
+(`saveWorkoutThrowsAnExplicitNotYetImplementedError`, `HealthKitWriterTests.swift`) since
+the behavior it asserted (`.workoutsNotYetImplemented` always thrown) no longer exists —
+the same "fix a test a WP's own change would otherwise silently make wrong" precedent
+WP-11 already established for a stale WP-07 test.
+
+**Verification performed in this session:** `swift test -Xswiftc -warnings-as-errors` from
+a clean `.build` in `Packages/SyncKit` — **153 tests / 13 suites, 0 failures, 0 warnings**
+(133/11 pre-existing WP-06/07/08/09/11 tests + 20 new: 2 new suites —
+`TypeMapperExerciseTests`, `WorkoutSavingTests` — plus extensions to
+`TypeMapperHealthKitMappingTests` and `TypeMapperPropertyTests`, net of one removed stale
+test). Then re-ran `swift test -Xswiftc -warnings-as-errors` in each of `Packages/CoreModel`
+(15/6), `Packages/Secrets` (14/3), `Packages/GoogleHealthClient` (35/7), and
+`Packages/CoachKit` (1/0) without editing any of them — all five packages still pass
+together, 0 failures, 0 warnings across the board, **218 tests total combined**.
+
+**Deviations from the plan's literal text (handoff protocol's "blocked?" clause), all
+already detailed above, indexed here for scanning:** (1) the Google exercise-type wire
+strings are entirely invented (base-knowledge.md names none) — flagged as needing
+reconciliation against real API access (P-1.3), same posture as every WP-11 flag; (2)
+`saveWorkout`'s signature changed from the WP-08 stub's `([HKObject]) throws` to
+`(MappedWorkout) async throws -> HKWorkout?` — a "signatures are starting points, not
+contracts" call, necessary because a `MappedWorkout` (not a pre-built `[HKObject]`) is what
+the HealthKit-free decision layer actually produces, and because `HKWorkoutBuilder`'s own
+async, multi-step nature has no single-call `[HKObject]`-shaped equivalent to `save(_:)`;
+(3) `HealthKitWriterError.workoutsNotYetImplemented` was removed (per its own doc comment's
+explicit invitation once a real implementation lands), requiring the one stale WP-08 test
+that asserted it be deleted; (4) `MappedObject.workout`/`MappedDecision.workout` forced two
+one-line, behavior-neutral compile fixes in `SyncEngine.swift`/`SyncEngineTests.swift` —
+files outside this WP's nominal TypeMapper/HealthKitWriter scope, but required to keep the
+whole `SyncKit` package building once a shared enum gained a new case; both are narrowly
+scoped and explicitly flagged, not silent scope creep; (5) no companion JSON fixture exists
+under `GoogleHealthClient`'s test target for Exercise, unlike every WP-07/11 type — purely a
+consequence of this WP's explicit `Packages/SyncKit`-only scope, documented inline instead.
+**Deliberately deferred, as scoped:** wiring `MappedObject.workout` through `SyncEngine`'s
+actual incremental sync pipeline (existence-diff against `HKObjectType.workoutType()`,
+calling the new `writer.saveWorkout(_:)`, honoring D13's watch-priority conflict
+resolution before ever considering a write) is explicitly **not** done here — flagged above
+as required follow-up, most naturally WP-12b's job since D13's `ConflictResolver` needs to
+run first for exactly this data type (a Google Exercise session overlapping a watch
+workout must never reach `saveWorkout` at all, per architecture.md D13.2); Food/Nutrition
+Log → `HKCorrelation(.food)` (WP-13) remains unimplemented, as expected; and the real,
+live-simulator/device end-to-end `HKWorkoutBuilder` flow (vs. this session's mock-driven
+and real-API-compilation verification) is still outstanding, same recurring gap every
+HealthKit-touching WP before this one has already flagged.
+
+## WP-14 · Non-writable types → LocalSample + badges
+
+**Verified, not rebuilt: the ECG/Active Zone Minutes/Active Minutes/Irregular Rhythm
+Notification pipeline already worked end-to-end before this WP touched anything.**
+CoreModel's `GoogleDataType.writability` (`GoogleDataType.swift`) already routes all four to
+`.localOnly` (WP-02); `TypeMapper.decide(_:)` (`TypeMapper.swift`) dispatches purely off that
+table (`switch point.dataType.writability { case .localOnly: return .localOnly, ... }`), so
+all four were already covered, not hand-listed; `SyncEngine.processPage`/`upsertLocalSample`
+(WP-09) already upserts `.localOnly` points into `LocalSample` keyed by `externalID`
+(fetch-then-mutate, never a blind re-insert, so `linkedWatchWorkoutUUID` survives a re-sync).
+An existing test (`TypeMapperGoldenTests.localOnlyTypesRouteToLocalOnly`) already iterated
+exactly these four types; an existing `SyncEngineTests.localOnlyPointsUpsertIntoLocalSample
+AndDoNotDuplicateOnResync` already proved the no-dupe-on-resync property, but only for ECG.
+**No genuine gap was found in the routing/upsert pipeline** — this WP's actual work was (1) a
+small SyncKit-side derivation helper the plan asked for, (2) extending one existing test's
+coverage from ECG-only to all four types (belt-and-suspenders, since `upsertLocalSample` has
+no per-type branching), and (3) the app-target UI layer, which didn't exist yet at all.
+
+**No CoreModel change needed, confirmed by reading the actual model before assuming
+otherwise:** `LocalSample.swift` has no `isClinical` field and doesn't need one —
+`LocalSample.dataType` (a `GoogleDataType.rawValue` string) already carries enough
+information to derive clinical-ness at read time. Built `Packages/SyncKit/Sources/SyncKit/
+Routing/ClinicalClassification.swift` (new `Routing/` subfolder, deliberately outside
+`TypeMapper/` — WP-13 was concurrently editing every file in that folder for nutrition
+correlations, and this WP's brief calls it off-limits): `public nonisolated func
+isClinicalType(_ type: GoogleDataType) -> Bool` (true for `.electrocardiogram`/
+`.irregularRhythmNotification`, false for everything else, including the other two
+`.localOnly` types) plus a `isClinicalType(rawDataType: String) -> Bool` convenience overload
+for callers holding a `LocalSample.dataType` string rather than the enum (returns `false`,
+not a crash, for an unrecognized string — same "never crash, just skip" posture
+`TypeMapper` uses for unmapped types). Marked `nonisolated` on purpose: it only
+pattern-matches the `GoogleDataType` value handed to it (no isolated CoreModel computed
+property is touched), so it's callable synchronously from anywhere — `SyncEngine`'s own
+actor, plain `swift test`, or a future WP-19/20 `ContextAssembler`/`ProfileField.isClinical`
+call site — with no forced `await`, unlike `GoogleDataType.writability` itself (a
+MainActor-isolated computed property per TypeMapper.swift's own header note). This is the
+one piece of this WP that's genuinely table-driven/derived rather than a fixed list, per the
+task's explicit "prefer deriving over adding a redundant stored field" instruction.
+**`ProfileField.isClinical`/`.excludedFromAI` (`ProfileField.swift`, WP-02) already exists one
+layer up** and already defaults `excludedFromAI` to `isClinical` (architecture.md D8) — that
+plumbing was built by WP-02 in anticipation of this WP, confirmed by reading it, not assumed;
+wiring an actual `LocalSample` → `ProfileField` conversion through it is WP-19/20's job
+(`KnowledgeProfile`/`ContextAssembler` don't exist yet), not this WP's.
+
+**App-target UI (`FitBridgeApp/Dashboard/`), the actual new surface this WP adds:**
+`LocalOnlyTypeRow.swift` (new view) renders one row per P1 local-only type from an array of
+`LocalSample`s (not a `SyncState`, which these four types never get) — name, item count,
+last-sample-relative-time (`RelativeDateTimeFormatter`, mirroring `SyncTypeRow`'s
+`lastSyncedText`, "No data yet" when the array is empty), an always-present "Not in Apple
+Health" badge, and — only for ECG/IRN, via `isClinicalType(_:)` — an additional "Clinical ·
+excluded from AI" indicator. `AppEnvironment.p1LocalOnlyTypes` (new static constant,
+`FitBridgeApp/DI/AppEnvironment.swift`, styled after the existing `p0Types`) is the fixed
+four-type list `DashboardView` iterates — deliberately a plain literal, not "every
+`GoogleDataType` where `.writability == .localOnly`" derived at this call site: this WP's
+brief names exactly these four as P1's scope, not "whatever CoreModel's table happens to
+mark local-only in the future" (a fifth type appearing there later should be a deliberate
+app-target decision, not something that silently starts appearing on the dashboard).
+`DashboardView.swift` gained a second `@Query(sort: \LocalSample.dataType)` and a second List
+section ("Not in Apple Health"), grouping the query results client-side by `dataType ==
+type.rawValue` per P1 type and rendering each via `LocalOnlyTypeRow`; the existing
+`SyncState`-backed P0 section/`SyncTypeRow` is untouched. `AppEnvironment
+.seedDashboardFixtures` (used only under `-UITestSeedData`) now also inserts one `LocalSample`
+per P1 type — ECG/IRN with distinct timestamps, Active Zone Minutes/Active Minutes likewise —
+so the dashboard UI test can assert the badges against real seeded `LocalSample` rows, not a
+mock.
+
+**Deliberately not wired into `DashboardView.syncNow()`'s `syncAll(types:)` call, flagged
+inline in `DashboardView.swift`'s header comment:** `GoogleConsentView`'s OAuth consent
+request (`AppEnvironment.p0Types.map(\.scope)`) only covers P0's scopes; ECG and IRN sit
+behind their own separate `.ecg`/`.irn` Google scopes (`GoogleDataType.scope`), so calling
+`syncAll` with the P1 types today would 403 against a real (non-stubbed) Google account that
+never consented to those scopes. Widening onboarding's consent request is out of this WP's
+stated file scope (`GoogleConsentView.swift` isn't listed in WP-14's "Touches"). Until a
+future WP does that (or wires WP-15's backfill to include these types), the dashboard's
+"Not in Apple Health" section is real and correctly wired to `LocalSample`, but only actually
+populates in production once *something* syncs these four types — flagged here as the honest
+current state, not silently glossed over.
+
+**One real SwiftUI/accessibility pitfall found only by running `xcodebuild test` against the
+simulator (not by reasoning about the code), a new instance of the same family WP-10's own
+progress.md note already flagged for plain containers:** applying one
+`.accessibilityIdentifier` to a SwiftUI `Label(_:systemImage:)` reports that **same**
+identifier on *both* of the Label's underlying elements (the image and the text) as separate
+accessibility nodes, not one combined element — a query for that identifier then fails with
+"Multiple matching elements found," confirmed via a real failing test run's captured
+accessibility snapshot. `Label` had never been used with an identifier anywhere in this
+codebase before this WP. Fixed in `LocalOnlyTypeRow.swift` by not using `Label` at all for the
+badge/clinical rows — an explicit `HStack { Image(...).accessibilityHidden(true);
+Text(...).accessibilityIdentifier(...) }` instead, so exactly one element (the `Text`) carries
+the identifier and its `.label` is the plain display string. Flagged here for whichever future
+WP next reaches for `Label` with an accessibility identifier. A second, smaller issue: the
+original WP-10 dashboard UI test asserted `dashboard.freshnessHeader` (the top section) *after*
+scrolling down to reach the `sleep` row — harmless when the List had only 4 P0 rows below it,
+but this WP's second "Not in Apple Health" section adds 4 more rows below that, and the extra
+scrolling needed to reach them evicted the freshness header's cell from the virtualized List's
+materialized window, breaking the *existing*, unmodified assertion. Fixed by moving that one
+assertion to immediately after launch, before any scrolling (`DashboardUITests.swift`) — the
+assertion itself is unchanged, just no longer coupled to how much content happens to render
+below it.
+
+**Tests** (7 new in `Packages/SyncKit/Tests/SyncKitTests/Routing/ClinicalClassificationTests
+.swift`, 1 new in the existing `SyncEngineTests.swift`, 1 new UI test in the existing
+`DashboardUITests.swift`): `isClinicalType`/`isClinicalType(rawDataType:)` — true for ECG/IRN;
+false for the other two `.localOnly` types (with a sanity check that they really are
+`.localOnly`, since clinical-ness is orthogonal to writability, not implied by it); false for
+a representative sample of `.healthKit`/`.skip` types; an exhaustive tripwire over
+`GoogleDataType.allCases` proving no case besides those two is ever miscategorized; the
+`rawDataType:` overload matches the enum overload for every known type and returns `false`
+(not a crash) for an unrecognized string. `SyncEngineTests
+.allFourLocalOnlyTypesUpsertIntoLocalSampleAndDoNotDuplicateOnResync` generalizes the existing
+ECG-only upsert-no-dupe test to all four types (fresh container/engine per type, sync twice,
+assert exactly one `LocalSample` row with the right `externalID`/`dataType` both times) —
+belt-and-suspenders confirmation that `upsertLocalSample`'s lack of per-type branching really
+does mean nothing type-specific trips up the fetch-by-`externalID` path.
+`DashboardUITests.testDashboardRendersNotInAppleHealthBadgesForLocalOnlyTypes` (new,
+`-UITestSeedData`, real `xcodebuild test`, not typecheck-only) asserts all four P1 rows
+render with the "Not in Apple Health" badge, that ECG/IRN additionally show the clinical
+indicator, and that Active Zone Minutes/Active Minutes do not.
+
+**Verification performed in this session:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/SyncKit` — **161 tests / 14 suites, 0 failures, 0 warnings** at the point this WP's
+own changes were complete (153 pre-existing + 8 new: 7 in the new `ClinicalClassificationTests`
+suite + 1 extending `SyncEngineTests`). Then re-ran `swift test -Xswiftc -warnings-as-errors`
+in `Packages/CoreModel` (15/6), `Packages/Secrets` (14/3), and `Packages/GoogleHealthClient`
+(35/7) without editing any of them — all passing, 0 failures, 0 warnings. `xcodegen generate`
+→ `xcodebuild build -scheme FitBridge -destination 'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'`
+(the same "iPhone 17 Pro" simulator WP-10 used) — **BUILD SUCCEEDED**, zero warnings,
+zero errors. `xcodebuild build-for-testing` — **TEST BUILD SUCCEEDED**. `xcodebuild test`
+(both the targeted `DashboardUITests` and the full `FitBridge` scheme, `FitBridgeTests` +
+`FitBridgeUITests`) — **TEST SUCCEEDED** every run, including three repeats while fixing the
+`Label`-identifier and freshness-header pitfalls above; the final run: `FitBridgeTests` 1/1,
+`FitBridgeUITests` 3/3 (`OnboardingUITests` unaffected, both `DashboardUITests` passing).
+**A transient, unrelated failure surfaced mid-session and is recorded here rather than
+"fixed," per the handoff protocol's coordination note:** partway through, `swift test` in
+`Packages/SyncKit` twice failed on non-exhaustive switches over `MappedUnit`
+(`MappedObject.swift`) and then over a new `MappedDecision.correlation(_)` case
+(`TypeMapperPropertyTests.swift`) — both entirely inside WP-13's concurrent nutrition-
+correlation work in `TypeMapper/`, mid-edit at the moment the build ran (confirmed by file
+mtimes moving in real time under `TypeMapper/` during this session). Per this WP's explicit
+instruction not to touch WP-13's files, no fix was attempted; a short wait and re-run showed
+WP-13 finish propagating the new case, after which the package built and tested clean again.
+**Final combined state, re-verified once more immediately before writing this note (now
+reflecting WP-13's further progress too, not just this WP's own changes):** `Packages/SyncKit`
+**170 tests / 15 suites**, 0 failures, 0 warnings (WP-13 had added a ninth suite and nine more
+tests of its own by this point); `CoreModel` 15/6, `Secrets` 14/3, `GoogleHealthClient` 35/7,
+`CoachKit` 1/0 unchanged; the app-target build and `DashboardUITests`/`FitBridgeTests` were
+re-run against this final state too — still **BUILD SUCCEEDED** / **TEST SUCCEEDED**.
+
+**No CoreModel gap, no genuine routing/upsert bug found, nothing deferred as a blocking
+gap.** **Deliberately deferred, as scoped:** actually wiring these four types into a real (or
+even stubbed) sync run from the dashboard/onboarding UI (needs broader OAuth consent scopes,
+`GoogleConsentView.swift`, out of this WP's file list); `ContextAssembler`/`KnowledgeProfile`
+honoring `ProfileField.excludedFromAI` for these types in a real AI turn (WP-19/20, doesn't
+exist yet); `WatchCoverageIndex`/real `ConflictResolver` (WP-12b), `BackfillCoordinator`
+(WP-15), and background scheduling (WP-16) remain untouched and unstarted, as expected.
+
+## WP-13 · Nutrition correlations
+
+Built the Nutrition Log → `HKCorrelation(.food)` pipeline entirely within
+`Packages/SyncKit/Sources/SyncKit/TypeMapper/`, following the exact
+`MappedDecision`/`MappedObject` pure/impure split every prior TypeMapper WP established, plus
+two coordination-flagged single-arm edits outside that directory (see below). **CoreModel/
+WP-06 had already pre-wired this feature** — confirmed by reading rather than assumed:
+`GoogleDataType.writability` (`GoogleDataType.swift`) already declares both `.food` and
+`.nutritionLog` as `.healthKit("HKCorrelationTypeIdentifierFood")`; `HealthKitIdentifierClassifier`
+(`HealthKitIdentifier.swift`) already classifies that sentinel to `.correlationFood`; and
+`HealthKitObjectTypeResolver` (`HealthKitObjectTypeResolver.swift`) already resolves it to a
+real `HKObjectType.correlationType(forIdentifier: .food)`. None of those three files needed
+touching (and weren't touched) — this WP only had to *use* the sentinel string, not invent it.
+
+**Real-SDK verification performed before writing any production code** (same "confirm against
+the real SDK, don't guess" discipline WP-06/07/11/12 established): read `HKCorrelation.h`,
+`HKTypeIdentifiers.h`, and `HKUnit.h` directly from the iOS 26.4 simulator SDK on this machine,
+confirming (1) `HKCorrelation`'s factory initializer
+(`+correlationWithType:startDate:endDate:objects:metadata:`) is **not** deprecated and needs no
+builder/store round-trip, unlike `HKWorkout` — this is the single biggest structural difference
+from WP-12's Exercise pipeline, and the reason this WP's `.correlation` case could follow the
+`.quantity`/`.category` "construct it right here" precedent instead of `.workout`'s
+pass-through-to-a-dedicated-writer-method one; (2) the four exact HealthKit identifiers WP-13's
+brief asked to confirm, not guess: `HKQuantityTypeIdentifierDietaryEnergyConsumed` (kcal,
+Cumulative), `HKQuantityTypeIdentifierDietaryProtein`/`DietaryCarbohydrates`/`DietaryFatTotal`
+(all g, Cumulative), plus `HKCorrelationTypeIdentifierFood` itself and the plain `HKUnit.gram()`
+factory (as opposed to `.kilogram`'s `gramUnitWithMetricPrefix:.kilo}`); (3) ran a scratch
+`xcrun swiftc -typecheck` (disposable directory under this session's scratchpad, never part of
+the repo) against the real `HealthKit.framework` for `arm64-apple-ios26.0-simulator`, using this
+repo's exact `Package.swift` flags, exercising the literal `HKCorrelation(type:start:end:
+objects:metadata:)` call shape (both the metadata-only and device+metadata overloads), the four
+dietary `HKQuantityTypeIdentifier` cases, `HKObjectType.correlationType(forIdentifier: .food)`,
+and the exact `let hkConstituents: [HKSample] = ....compactMap { ... }; Set(hkConstituents)`
+covariance pattern this WP's `makeHKCorrelation()` uses — zero errors, zero warnings, before any
+of it was written into `MappedObject.swift`.
+
+**New/extended files, `Packages/SyncKit/Sources/SyncKit/TypeMapper/` (all within this WP's
+core scope):** **`MappedTypes.swift`** — new `MappedUnit.gram` case; new
+`MappedNutritionCorrelation` struct (`healthKitIdentifier`, `start`, `end`,
+`constituents: [MappedQuantitySample]`, `metadata`); new `MappedDecision.correlation(_:)` case
+(doc-commented with the "why this isn't `.workout`-shaped" reasoning above); updated the
+`.skip` case's doc comment to remove the now-stale forward-reference to this WP. **`TypeMapper
+.swift`** — added `case .nutritionLog: return decideNutritionLog(point)` to
+`decideHealthKitMapped`'s switch (the switch's outer *shape* — one line, additive — is
+unchanged, exactly matching WP-07's own "broadening the switch is the extension point" note);
+implemented `decideNutritionLog(_:)`; rewrote the `default` case's doc comment to explain both
+remaining deliberately-unhandled rows (`.totalCalories`, unchanged from WP-11, and `.food`, new
+here). **`MappedObject.swift`** — new `MappedObject.correlation(HKCorrelation)` case (`#if
+canImport(HealthKit)`-guarded, like `.quantity`/`.category`); new `.correlation` arm in
+`TypeMapper.map(_:)`'s switch; new `.gram` arm in `makeHKUnit()`; new
+`MappedNutritionCorrelation.makeHKCorrelation() -> HKCorrelation?` extension, which reuses
+`MappedQuantitySample.makeHKQuantitySample()` verbatim per constituent (no second
+`HKQuantitySample`-construction code path) and mirrors `makeHKQuantitySample`/
+`makeHKCategorySample`'s existing direct `HKObjectType.xxxType(forIdentifier:)`-lookup style
+(not routed through `HealthKitObjectTypeResolver`, matching this file's own established
+precedent for those two, even though the resolver could technically also do it).
+
+**Grouping-mechanism assumption (this WP's central judgment call, flagged per the task's
+explicit instruction, not silently guessed):** base-knowledge.md §3 records **Nutrition Log as
+a Sample (S) record type** — the same record kind as Weight/Height/Blood Glucose, *not* a
+Session (Se) like Exercise/Sleep. Taking that classification at face value (rather than
+assuming a session-style multi-point structure the doc doesn't actually describe for this
+type), this mapper assumes **one `GoogleDataPoint` = one whole meal/log entry**, with up to four
+macro fields flat in that single point's `values` dict — no `sessionPayload`, no cross-point
+grouping step. Under this assumption, WP-13's spec line "meal grouping key = Google log entry
+ID" is satisfied *for free*: `GoogleDataPoint.id` already *is* the meal's own external ID,
+identical to every other Sample-type row this package already maps (weight, height, blood
+glucose, ...) — there is no separate grouping mechanism to build. This is exactly the
+brief's own suggested "reasonable assumption" (option (e) in the task's own list), chosen
+over the alternative (multiple `GoogleDataPoint`s per meal, grouped by a shared but
+differently-keyed meal ID found in metadata/sessionPayload) because base-knowledge.md gives
+no evidence for that alternative and the Sample/Session distinction it *does* document points
+away from it. **Flagged here as needing reconciliation against the real API** (still gated on
+P-1.3, the outstanding Google Cloud OAuth client) — if a real payload instead spreads one
+meal's macros across multiple points sharing a differently-shaped meal identifier, only
+`TypeMapper.decideNutritionLog` needs a new upstream grouping step; `MappedNutritionCorrelation`
+itself (a correlation's worth of constituents) would still apply unchanged. Wire field names
+(`energy_kcal`/`protein_g`/`carbs_g`/`fat_g`, read after GoogleHealthClient strips Google's
+assumed `nutrition_log.` prefix) are likewise invented and flagged, same posture as every
+WP-11/12 field-name note — documented in `decideNutritionLog`'s doc comment and in both new
+fixtures' `_comment` keys.
+
+**Partial macro sets — the deliverable's other explicit requirement:** every constituent is
+independently optional; `decideNutritionLog` drops a **single** out-of-range (negative) macro
+field without invalidating the rest of the meal (same "drop just the bad field" philosophy
+WP-12's `decideExercise` established for distance/energy, not WP-07's "drop the whole point"
+guard for steps/heart-rate) — zero is an ordinary, accepted reading for any macro (e.g. 0g
+protein for a black coffee log). Only when *zero* constituents survive (none reported, or every
+reported one was negative and dropped) does the whole point route to `.skip` — never an empty
+`HKCorrelation` (same "never emit a degenerate empty result" rule WP-07's `decideSleep`
+established for an all-segments-dropped session). Tested explicitly at both the pure-decision
+layer (`fullMacroMealGolden`, `partialMacroMealGolden`, `singleMacroMealStillProducesACorrelation`,
+`mealWithNoMacrosAtAllRoutesToSkip`, `negativeMacroIsDroppedButOthersSurvive`,
+`allNegativeMacrosRoutesToSkip`, `zeroValuedMacroIsAccepted`) and the real-`HKCorrelation` layer
+(`fullMacroMealMapsToRealHKCorrelation` — 4 constituents; `partialMacroMealMapsToRealHKCorrelationWithTwoConstituents`
+— exactly 2; `mealWithNoMacrosStaysSkippedThroughMap`).
+
+**Metadata placement — stamped on *both* the correlation and every constituent sample,** per
+the task's explicit "figure out and document your choice" instruction. Reasoning: (1)
+`SyncEngine`'s existence-diff for this type queries only
+`HKObjectType.correlationType(forIdentifier: .food)` (D4's per-(type,window) dedupe check only
+strictly needs the correlation's own external-ID metadata); but (2) the constituent quantity
+samples (`dietaryProtein` etc.) are independently queryable/readable HealthKit objects in their
+own right — a future `KnowledgeStore` nutrition summary (WP-19) may read them directly, not
+through correlation membership — and architecture.md D4 says "every HealthKit sample," not
+"every correlation." This costs nothing extra to implement: `makeHKCorrelation()` builds each
+constituent via the already-existing, already-tested `MappedQuantitySample.makeHKQuantitySample()`,
+which stamps whatever `MappedMetadata` it's given automatically — no new stamping code was
+written. Verified explicitly (`fullMacroMealMapsToRealHKCorrelation` checks
+`HKMetadataKeyExternalUUID` on both the correlation itself and each real constituent
+`HKQuantitySample`).
+
+**Coordination points — the two minimal, flagged edits outside `TypeMapper/`,** exactly the
+kind the task brief anticipated and asked to keep as small as possible: (1)
+**`Packages/SyncKit/Sources/SyncKit/SyncEngine/SyncEngine.swift`**, `processPage`'s exhaustive
+switch over `MappedObject` — added one arm, `case .correlation(let correlation): guard
+!knownExternalIDs.contains(point.id) else { continue }; batch.append(correlation);
+newExternalIDs.append(point.id)`, structurally **identical** to the pre-existing `.quantity`
+arm immediately above it (not a no-op-with-a-TODO the way WP-12's `.workout` arm had to be —
+`HKCorrelation` is a plain `HKObject`/`HKSample`, so it slots into the existing `[HKObject]`
+batch/`writer.save(batch)` path with zero new orchestration needed). (2) `Packages/SyncKit/
+Tests/SyncKitTests/SyncEngine/SyncEngineTests.swift`'s `SuppressingConflictFilter.resolve(_:for:)`
+— added `.correlation` to the existing `case .workout, .localOnly, .skip:` pass-through arm
+(now `case .workout, .correlation, .localOnly, .skip:`), required purely to keep that
+test-only exhaustive switch compiling once `MappedObject` gained a new case, exactly WP-12's
+own precedent for the identical situation with `.workout`. Both edits are one arm each,
+behavior-neutral for every pre-existing test, and clearly commented in place as this WP's
+addition. **Confirmed live, not just planned:** WP-14 (concurrently editing this same
+`SyncEngine`/`SyncEngineTests` area for LocalSample routing) hit exactly the transient
+compile break these two arms would cause mid-edit, waited rather than touching this WP's
+files, and re-ran once this WP's edit had propagated — see WP-14's own entry above ("a short
+wait and re-run showed WP-13 finish propagating the new case") for their side of this
+coordination. **`HealthKitWriter/`/`HealthKit/` were never touched** — `HKCorrelation`'s
+synchronous constructibility meant no new writer method (no `saveWorkout`-style addition) was
+needed at all; `.correlation` reuses `HealthKitWriter.save(_:)`/`existingExternalIDs(type:
+start:end:)` completely unmodified.
+
+**Correlation dedupe — reuses the existing path, no parallel mechanism, verified directly
+against `HealthKitWriter`+`MockHealthStore` rather than through a `SyncEngine`-level test** (a
+deliberate choice to keep this WP's footprint in `SyncEngineTests.swift` to the single
+unavoidable arm above): new file `Tests/SyncKitTests/TypeMapper/NutritionCorrelationSavingTests.swift`
+(`#if canImport(HealthKit)`, reuses `MockHealthStore` from `Tests/SyncKitTests/HealthKitWriter/`
+as-is — that file was read and reused, never modified) proves `HKObjectType
+.correlationType(forIdentifier: .food)` flows through the *exact same*
+`existingExternalIDs(type:start:end:)`/`save(_:)` methods every `.quantity`/`.category`/`.workout`
+write already uses: `noExistingMealsBeforeAnySave`, `aSavedCorrelationIsDiscoverableThroughTheSameExistingExternalIDsMethod`,
+`aSavedPartialMacroCorrelationIsAlsoDiscoverable`, `callerMustCheckExistingExternalIDsBeforeSavingAgain`
+(mirrors `WorkoutSavingTests`' own dedupe-section test names/shape almost exactly), and
+`constituentSamplesAreIndividuallyPresentInTheStoreAfterSave` (documents the mock's boundary —
+`MockHealthStore.save(_:)` only records what its top-level `[HKObject]` batch was actually
+handed, so the correlation is discoverable as one `HKObject` but its constituents aren't
+separately enumerated by this mock the way a real `HKHealthStore` would fan them out
+internally — flagged in-code so this isn't mistaken for a production gap). **One authoring bug
+caught by the first real test run, not a production bug:** the first draft of
+`callerMustCheckExistingExternalIDsBeforeSavingAgain` queried `existingExternalIDs` with the
+fixture's *exact* zero-length instant bounds (`start == end`, matching this fixture's
+point-in-time meal timestamp, the same shape as weight/height/bloodGlucose elsewhere in this
+package) — `MockHealthStore`'s strict `<`/`>` date-window overlap check can never match an
+exact zero-length window against an exact zero-length sample, so the test failed on first run.
+Fixed by padding the query window (±60s), matching the exact convention every existing
+instant-sample dedupe test in `HealthKitWriterTests.swift` already uses (`Self.farPast`/
+`Self.farFuture`) — caught and fixed before this note was written, not left broken.
+
+**Fixtures added** under `Packages/GoogleHealthClient/Tests/GoogleHealthClientTests/Fixtures/GoogleHealth/`
+(fixtures only, per this WP's explicit scope grant — unlike WP-12's Exercise, which *couldn't*
+get a companion JSON fixture due to its stricter SyncKit-only scope, this WP's brief explicitly
+grants fixture-only access to GoogleHealthClient's test directory, so the WP-07/11 convention
+of a companion `_comment`-documented JSON fixture was followed, not WP-12's exception):
+`nutrition-log.json` (`nutrition-0001`, full macro set: 650 kcal/35g protein/70g carbs/22g fat)
+and `nutrition-log-partial.json` (`nutrition-0002`, energy + protein only — WP-13's required
+"meal missing macros" scenario, macros *absent* from `value`, not present-as-zero/null,
+matching blood-glucose-mgdl.json/-mmol.json's existing mutual-exclusion convention). Neither
+fixture is referenced by any existing GoogleHealthClientTests `.swift` file (confirmed by
+grepping that test target for `Fixtures/GoogleHealth` references before adding them) — same as
+every WP-11 fixture addition, they sit inert until a future WP wires a `GoogleDataPointDecodingTests`
+case to them; `Packages/GoogleHealthClient`'s own test count is confirmed unchanged (35/7) by
+this addition. Mirrored in SyncKit's `TypeMapperFixtures.nutritionLogPoint(...)` (one
+parameterized builder covering both the full and partial scenarios, plus a new
+`MappedDecision.isCorrelation` convenience alongside the existing `.isQuantity`/`.isCategory`).
+
+**Also fixed one now-stale WP-11/12 test, same "a WP's own change can retroactively make an
+older test's premise wrong" precedent WP-11 and WP-12 each already established for one test of
+their predecessor's:** `TypeMapperGoldenTests.unimplementedHealthKitTypeRoutesToSkipForNow`
+(exemplar `.exercise`, chosen by WP-11 as "still genuinely unimplemented" back when Exercise
+itself was still unimplemented) had gone stale the moment WP-12 implemented Exercise — it still
+*passed* (an exercise point with no `sessionPayload` still routes to `.skip`, just for a
+different reason: missing payload, not "not implemented"), so it wasn't caught by any `swift
+test` run, only by re-reading what the test's own name and doc comment claimed. Once this WP
+implements Nutrition Log too, there is no longer *any* `.healthKit`-writability
+`GoogleDataType` left that's genuinely "not implemented yet" — every `default`-routed case
+(`.totalCalories`, `.food`) is now a documented, deliberate non-write decision, not a
+placeholder. Renamed to `foodRoutesToSkipDeliberately` (exemplar `.food`) with a doc comment
+explaining exactly this, parallel to the existing `totalCaloriesRoutesToSkip` test.
+
+**Tests, final count for `Packages/SyncKit`:** `swift test -Xswiftc -warnings-as-errors` from a
+clean `.build` — **178 tests / 16 suites, 0 failures, 0 warnings**. New: `TypeMapperNutritionCorrelationTests`
+(9 tests, new suite, HealthKit-free decision layer) and `NutritionCorrelationSavingTests` (5
+tests, new suite, `#if canImport(HealthKit)`, dedupe); extended `TypeMapperHealthKitMappingTests`
+(+3: full/partial/no-macros real-`HKCorrelation` checks), `TypeMapperPropertyTests` (nutrition
+added to both the "never end < start" exhaustive list — now 19 rows — and
+`reversedWindowIsAlwaysDropped`), `TypeMapperFixtures` (+1 builder, +1 `MappedDecision`
+convenience), `TypeMapperGoldenTests` (1 renamed, not net-new). Note for whoever reads this
+next: this package's test/suite count also includes WP-14's concurrent LocalSample-routing
+additions (`ClinicalClassificationTests` and others) already present in the tree before this
+WP's own edits began — the 178/16 figure is the honest combined total, not this WP's isolated
+delta; this WP's own net addition is 25 new/changed tests across two new suites plus five
+extended files. **Re-ran the same command in each of the other four packages immediately
+before writing this note:** `Packages/CoreModel` **15/6**, `Packages/Secrets` **14/3**,
+`Packages/GoogleHealthClient` **35/7**, `Packages/CoachKit` **1/0** — all unchanged from their
+prior baselines, all five packages passing together, 0 failures, 0 warnings, **243 tests total
+combined**.
+
+**Deviations from the plan's literal text (handoff protocol's "blocked?" clause), all detailed
+above, indexed here for scanning:** (1) the one-`GoogleDataPoint`-per-meal grouping assumption
+(base-knowledge.md's own Sample-vs-Session record-type distinction is the basis, not a guess
+made from nothing, but still unconfirmed against a real payload — gated on P-1.3 like every
+prior WP's field-name flags); (2) wire field names (`energy_kcal`/`protein_g`/`carbs_g`/
+`fat_g`) are invented, same posture as every WP-11/12 field-name note; (3) `.food` (as opposed
+to `.nutritionLog`) is deliberately left unhandled — base-knowledge.md §3 never marks plain
+"Food" ✅-writable, only "Nutrition Log" is, despite CoreModel's writability table grouping both
+under one sentinel; (4) two one-line, behavior-neutral compile-fix arms in `SyncEngine.swift`/
+`SyncEngineTests.swift` — both required, both minimal, both flagged as this WP's coordination
+points per the task brief's own explicit allowance for exactly this situation, and confirmed
+not to have collided destructively with WP-14's concurrent work in the same area. **Not a
+deviation, worth stating explicitly:** `HealthKitWriter/`/`HealthKit/` needed zero changes —
+unlike WP-12's Exercise, this feature's real-HealthKit-object construction fit entirely inside
+`TypeMapper/`'s existing "construct it right here" pattern. **Deliberately deferred, as
+scoped:** wiring `MappedObject.correlation` through any watch-priority conflict resolution
+(not applicable — D13 is workout/stream-specific, nutrition correlations have no watch-overlap
+concept) is correctly not a concern here; real, live-simulator/device end-to-end
+`HKHealthStore.save` of an actual `HKCorrelation` (vs. this session's `MockHealthStore`-driven
+verification) remains outstanding, same recurring gap every HealthKit-touching WP before this
+one has already flagged, still gated on P-1.3.
+
+## WP-17 · Sync settings + incremental scopes
+
+Built a new `FitBridgeApp/Settings/` folder (three files) plus one new app-target unit test
+file — no package under `Packages/` was touched, per this WP's scope.
+
+**`ensure(scopes:)` already existed — no `GoogleAuthManager` change was needed.** Per this
+WP's explicit instruction to check before assuming a gap, read
+`Packages/GoogleHealthClient/Sources/GoogleHealthClient/Auth/GoogleAuthManager+Consent.swift`
+first and found WP-04 had already built exactly what this WP needs:
+
+```swift
+@MainActor
+@discardableResult
+public func ensure(
+    scopes: [GoogleDataType.Scope],
+    presentationContextProvider: any ASWebAuthenticationPresentationContextProviding
+) async throws(GoogleAuthError) -> Bool
+```
+
+— it computes `missingHealthScopes(from:)` (the granted-vs-requested diff) internally and only
+calls `beginConsent` for the missing subset, returning `true`/no UI at all if nothing was
+missing. This is word-for-word the plan's "incremental-scope diffing" ask, so `GoogleAuthManager.swift`
+and `GoogleAuthManager+Consent.swift` are **untouched** — the "additively extend" allowance in
+this WP's brief turned out not to be needed at all. The one thing `ensure` needs beyond scopes
+is an `ASWebAuthenticationPresentationContextProviding`; rather than reopening
+`DI/GoogleConsentCoordinator.swift` (explicitly read-only per this WP's brief, and WP-10's
+onboarding seam), a small independent copy of its `presentationAnchor(for:)` conformance lives
+in the new `IncrementalConsentPresenter.swift` — same ~15 lines, same `MainActor.assumeIsolated`
+resolution for the non-isolated protocol requirement, deliberately duplicated rather than shared
+so this WP's diff stayed additive-only.
+
+**`SyncPreferences.swift`** (new): a `@MainActor @Observable final class` wrapping a
+dependency-injected `UserDefaults` (default `.standard`; tests inject
+`UserDefaults(suiteName:)`). `SyncPreferences.syncableTypes` is `GoogleDataType.allCases.filter
+{ $0.writability != .skip }` — every type CoreModel's writability table gives a real
+destination (22 `.healthKit` + 4 `.localOnly` = 26 types), matching this WP's "every syncable
+type, not `.skip` ones" instruction over hand-listing P0's four. Persists the *disabled* set
+(absence = enabled, so every existing/fresh install defaults to "everything on," matching prior
+behavior before this screen existed). Two pure static functions are the WP's required-tests
+target and are also the reusable, documented API for any call site:
+
+```swift
+static func filterEnabled(_ types: [GoogleDataType], disabled: Set<GoogleDataType>) -> [GoogleDataType]
+static func requiredScopes(for enabledTypes: Set<GoogleDataType>) -> Set<GoogleDataType.Scope>
+```
+
+plus instance conveniences (`isEnabled(_:)`, `setEnabled(_:for:)`, `filteredForSync(_:)`,
+`requiredScopes(toEnable:)`) that wrap them against the instance's live `disabledTypes`.
+
+**Where the disabled-type filter lives (deliverable 3) — the actual design problem this WP had
+to solve given the "don't touch `SyncEngine.swift`/`FitBridgeApp.swift`" fence:** the filter
+can't live inside the sync engine (SyncKit, off-limits) or the background-task registration
+site (`FitBridgeApp.swift`, off-limits — and, as of this session, WP-16's in-flight territory,
+see the build-verification note below). It lives as a pure function on `SyncPreferences`
+instead, and **every caller of `SyncEngine.syncAll(types:)` is expected to run its candidate
+type list through it first.** This session wires the one call site currently in the app:
+`DashboardView.swift`'s `syncNow()` now does
+
+```swift
+let typesToSync = SyncPreferences().filteredForSync(AppEnvironment.p0Types)
+```
+
+— a fresh `SyncPreferences()` constructed at call time (not held in `@State`) specifically so
+it always reflects whatever `SettingsView` (a separate instance, pushed via `NavigationLink`)
+most recently wrote to the same `UserDefaults` key, avoiding a staleness trap two independent
+`@Observable` instances over the same store would otherwise create. **Coordination point,
+flagged per the handoff protocol:** WP-16's background-refresh handler will need to apply the
+same filter to its own due-types list before calling `syncAll(types:)` — it should construct
+its own `SyncPreferences()` (same `UserDefaults.standard` key, no shared instance needed) and
+call `.filteredForSync(_:)` exactly as `DashboardView` does. This is documented in
+`SyncPreferences.swift`'s own header comment so both call sites (and whoever reads that file
+next) see the same instruction, not just this note. Disabling a type does **not** touch
+already-written HealthKit/`LocalSample` data — only future `syncAll` calls that consult this
+filter are affected — matching D2/WP-35's separation of "stop syncing" from "delete."
+
+**`SettingsView.swift`** (new): one `List` section per `GoogleDataType.Scope`
+(`GoogleDataType.Scope.allCases` order: activityAndFitness/healthMetrics/sleep/nutrition/ecg/irn),
+each containing a `Toggle` per type in that scope from `SyncPreferences.syncableTypes`. Turning
+a toggle on calls `appEnvironment.googleAuthManager.ensure(scopes:
+preferences.requiredScopes(toEnable: type), presentationContextProvider: consentPresenter)`;
+failures render inline per-row (`settings.error.<type>`) rather than silently swallowing —
+mirrors `GoogleConsentView`'s existing error-surfacing pattern. `AppEnvironment` itself was
+**not** modified (explicitly read-only per this WP's brief) — `SettingsView` reads
+`appEnvironment.googleAuthManager` from the environment exactly as `GoogleConsentView` already
+does, and owns its own `SyncPreferences`/`IncrementalConsentPresenter` instances rather than
+routing through `AppEnvironment`.
+
+**`DashboardView.swift`** (minimal additive edit, the one file this WP was explicitly allowed
+to touch beyond its own new folder): two changes, both flagged inline in the file with `WP-17`
+comments — (1) the `syncNow()` filter shown above; (2) one new `ToolbarItem(placement:
+.topBarLeading)` holding a `NavigationLink(destination: SettingsView())` (gear icon,
+`dashboard.settings` accessibility identifier), placed at `.topBarLeading` specifically so it
+doesn't collide with the existing `.primaryAction` "Sync Now" button. **Coordination point for
+WP-15:** if WP-15 also wants a Dashboard nav link (to a backfill screen), `.topBarLeading` now
+holds this WP's Settings link — a second link should pick a different toolbar placement (or a
+list-section entry) rather than replacing this one. Checked `git status`/file mtimes for a
+`Backfill` app-target screen before finishing this session; none existed yet, so no live
+collision was possible in-session, but this is recorded here in case WP-15 lands after.
+
+**`project.yml` deviation, not anticipated going in, discovered only by actually running
+`xcodebuild test`:** `FitBridgeTests` had no `dependencies:` entry at all (WP-01's placeholder
+test never imported anything). Its `BUNDLE_LOADER = "$(TEST_HOST)"` build setting is inferred by
+xcodegen regardless, which is enough for Xcode to *host* the bundle inside the app, but **not**
+enough for the linker to resolve symbols — the new `SyncPreferencesTests.swift`'s `@testable
+import FitBridge` type-checked fine but failed at link time with dozens of "Undefined symbol"
+errors for every `FitBridge`/`CoreModel` symbol referenced, plus an explicit compiler warning
+naming the missing dependency. Fixed by adding
+
+```yaml
+FitBridgeTests:
+  ...
+  dependencies:
+    - target: FitBridge
+```
+
+(xcodegen's standard recipe for a hosted unit-test target) — `FitBridge`'s own transitive
+package links (CoreModel, Secrets, GoogleHealthClient, SyncKit, CoachKit) came along for free,
+no per-package entry needed. This is a one-line, additive, infrastructure-only change (not a
+source file, and not one of the explicitly fenced-off packages/files); flagged here per the
+handoff protocol's "blocked? ... prefer the current SDK/setup, keep the behavior specified,
+note the deviation" clause, since strictly speaking this WP's brief said "you should not need
+to edit project.yml" (true for *source* globbing, but this gap was a pre-existing test-target
+wiring hole that only this WP's first real app-target unit test happened to expose).
+
+**Tests** (`FitBridgeTests/SyncPreferencesTests.swift`, 17 new — this WP's own file is the
+*first* real test in `FitBridgeTests` beyond WP-01's placeholder): `SyncPreferencesPureFunctionTests`
+(9, no `UserDefaults` involved at all) — `filterEnabled` excludes a disabled type, no-op when
+nothing's disabled, empties out when everything's disabled, ignores a disabled type absent from
+the candidate list (the WP's literal "disabled type skipped by `syncAll`" ask, tested as the
+pure filtering function per its explicit "test the filtering function, not full integration"
+instruction); `requiredScopes` unions across enabled types, dedupes two same-scope types down to
+one, empty-set-in/empty-set-out (the WP's literal "scope-computation from toggle set" ask);
+`syncableTypes` excludes every `.skip` type and includes every non-`.skip` type (sanity-checked
+against `GoogleDataType.allCases` directly, not a hand-copied list). `SyncPreferencesInstanceTests`
+(8, each building its own throwaway `UserDefaults(suiteName:)` and tearing it down before
+returning — never touches `UserDefaults.standard`) — fresh instance has everything enabled;
+disabling persists and is reflected by `isEnabled`; state persists across two instances sharing
+one `UserDefaults`; re-enabling clears the disabled set; `filteredForSync` consults live state;
+`requiredScopes(toEnable:)` returns the type's own scope; two instances over *different*
+`UserDefaults` suites never see each other's writes (proves the DI seam actually isolates, not
+just that the API compiles).
+
+**Verification performed in this session:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/GoogleHealthClient` — **35 tests / 7 suites, 0 failures, 0 warnings**, unedited, as
+expected. Re-ran the same command in all five packages together: `CoreModel` 15/6, `Secrets`
+14/3, `GoogleHealthClient` 35/7, `SyncKit` 205/24 (grown from 197/20 earlier in the session —
+WP-15/WP-16 landing their own tests concurrently, none of it touched here), `CoachKit` 1/0 — all
+passing, 0 failures, 0 warnings. `xcodegen generate` + `xcodebuild build -scheme FitBridge
+-destination 'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'` ("iPhone 17 Pro" simulator, matching
+prior WPs' device) — **BUILD SUCCEEDED**, zero errors, zero warnings. `xcodebuild test` (full
+`FitBridge` scheme) — **TEST SUCCEEDED**: `FitBridgeTests` **17 tests / 2 suites, 0 failures**
+(the pre-existing placeholder + this WP's 17 new ones); `FitBridgeUITests` **3/3** unaffected
+(`DashboardUITests` ×2, `OnboardingUITests` ×1).
+
+**Transient, unrelated failures hit mid-session and recorded rather than fixed, per the handoff
+protocol's explicit instruction for exactly this situation:** (1) `Packages/SyncKit` failed
+`swift test` twice earlier in the session with compile errors squarely inside
+`Sources/SyncKit/Backfill/` (a MainActor-isolation error in
+`UserDefaultsBackfillHorizonRecordStore`, then a "no calls to throwing functions" error in a
+backfill test) — confirmed via file mtimes moving in real time that this was WP-15 actively
+mid-edit in its own fenced-off folder; a background retry loop (`until swift test ...; do sleep
+20; done`) confirmed SyncKit reached a clean, passing state (197/20 at that point) before this
+session's own app-level build/test ran, and it has since grown further (205/24) as WP-15/WP-16
+kept landing work — never touched. (2) A later `xcodebuild build` failed with ten+ MainActor-
+isolation errors **entirely inside `FitBridgeApp.swift`** (`BGTaskScheduler` registration,
+`logger`/`identifier`/`configuration` static properties referenced from a nonisolated closure
+context) — this file is explicitly fenced off as WP-16's territory and was never touched here;
+confirmed by reading the errors (all inside WP-16's background-sync registration code, none in
+anything this WP added) and by this session's own earlier, fully clean `xcodebuild build`+`test`
+run (captured above) predating that edit. A follow-up background retry
+(`until xcodebuild build ...; do sleep 20; done`) was started before writing this note to obtain
+a final, contemporaneous clean build; if it hasn't completed by the time this note is read, the
+earlier BUILD SUCCEEDED/TEST SUCCEEDED run already stands as this WP's own verification — the
+failure is entirely WP-16's in-flight code, not this WP's.
+
+**Deliberately deferred, as scoped:** wiring WP-16's background handler to consult
+`SyncPreferences` itself (documented as a coordination point, not implemented here — WP-16
+owns `FitBridgeApp.swift`/`SyncKit/BackgroundSync/`); any UI test for the Settings screen or the
+incremental-consent flow (this WP's "Tests" line only asks for the two pure functions above,
+tested as such — not full integration, matching the brief's explicit instruction); an "is this
+scope currently granted" indicator per row (would need an async per-row read of
+`GoogleAuthManager.currentGrantedScopes`, not required by the brief, skipped to keep the screen
+simple); WP-35's actual data-wipe-on-disable flow (explicitly out of scope, called out in both
+the plan and this session's UI copy: "Data already written ... is not deleted -- that's a
+separate step in a future release").
+
+**Post-note addendum (observed after the above was written, same session):** WP-15 landed its
+own `DashboardView.swift` nav link — a new `Section { NavigationLink("Historical Backfill",
+destination: BackfillView()) }` appended after the existing list sections — concurrently with
+this WP's toolbar edit. Exactly the non-collision this note's "Coordination point for WP-15"
+paragraph anticipated: two independent, additive edits to the same file (a new toolbar item
+here, a new list section there) landed without conflict or overwrite. No action was needed on
+this WP's part; recorded here only to close the loop on that coordination flag.
+
+## WP-15 · Historical backfill
+
+Built `Packages/SyncKit/Sources/SyncKit/Backfill/` (three new files:
+`BackfillTypes.swift`, `BackfillCoordinator.swift`,
+`SyncEngine+BackfillBusyProbe.swift`) plus `FitBridgeApp/Backfill/` (two new
+files: `BackfillView.swift`, `BackfillTypeRow.swift`), per architecture.md D5
+and this WP's four steps.
+
+**Architectural decision, made only after reading WP-09's actual code (per
+this WP's own explicit instruction): `BackfillCoordinator` does *not*
+delegate a chunk's work to `SyncEngine.sync(type:)`.** `SyncEngine.sync(type:)`
+(`SyncEngine.swift`) takes **no window parameter at all** — its window is
+always internally derived as `(SyncState.lastSyncedAt ?? now - initialWindow)
+- lookback(type) ... now`, and on success it advances `SyncState.lastSyncedAt`,
+the *incremental* high-water mark. There is no "synthetic window" parameter
+to hand it, and even if there were, routing backfill through it would either
+corrupt `lastSyncedAt` with a backward-walking value (breaking D3 for every
+future incremental sync) or require restructuring `SyncEngine` to accept a
+window and choose which cursor field to persist — a restructure of a file
+this WP was told to touch minimally, if at all. So `BackfillCoordinator` is
+its own, leaner actor that **reuses** every other WP-09/07/08 primitive
+directly: the exact same `GoogleReconcileClient` protocol (no adapter
+needed — `GoogleHealthClient`'s existing conformance, from
+`GoogleHealthClient+SyncEngine.swift`, is reused verbatim), `TypeMapper.map(_:)`,
+`ConflictFiltering`/`IdentityConflictFilter` (the WP-12b seam), and
+`HealthKitWriter`'s batched `existingExternalIDs`/`save` (architecture.md D4).
+Its own `pullMapWrite`/`processPage` (`BackfillCoordinator.swift`) is a
+deliberate, small, parallel implementation of `SyncEngine.performSync`/
+`.processPage`'s pull → map → conflict-filter → existence-diff → write/upsert
+shape, keyed on the backward-walking `SyncState.backfillCursor` instead of
+the forward `lastSyncedAt` — the two cursors' semantics are different enough
+that unifying them would have cost more (a `SyncEngine` restructure) than it
+saved. Full reasoning is in `BackfillCoordinator.swift`'s own header comment.
+
+**One additive change to `SyncEngine.swift` (a coordination point, flagged
+per the brief since WP-16 also reads `SyncEngine`'s in-flight state):** added
+`public func isBusy(for type: GoogleDataType) -> Bool { inFlight[type] != nil }`
+— a one-method, read-only accessor over the *existing* `inFlight` dictionary
+(WP-09's own de-duplication bookkeeping), no new state, no restructuring.
+This satisfies WP-15 step 2's "SyncEngine exposes an `isBusy` signal" via a
+narrow protocol, `BackfillBusyProbe` (`Backfill/BackfillTypes.swift`), that
+`SyncEngine` conforms to with a zero-code extension
+(`SyncEngine+BackfillBusyProbe.swift`, deliberately placed in this WP's own
+`Backfill/` folder rather than adding a file to `SyncEngine/`, to keep this
+WP's footprint inside that concurrently-relevant file to the one method).
+Checked mid-session: WP-16 never touched `SyncEngine.swift` itself (its own
+footprint was `FitBridgeApp.swift` + a new `SyncKit/BackgroundSync/
+BackgroundSyncPlanner.swift`), so no collision materialized in practice.
+
+**`backfillCursor`'s literal contract, honored, plus one small side-store
+for the one thing it can't represent (the CoreModel-scope gap, documented
+instead of editing CoreModel per the handoff protocol):** `SyncState
+.backfillCursor`'s own doc comment says `nil` means "backfill hasn't started
+or has completed" — `BackfillCoordinator` honors this literally (sets the
+cursor to a concrete `Date` after every checkpointed chunk, back to `nil`
+exactly when the horizon is reached). But telling "never started" apart from
+"completed to horizon X" — needed for WP-15 step 3's "extending an
+already-completed backfill re-opens the walk, resuming from where it left
+off, not from scratch" — genuinely needs a second fact `SyncState` doesn't
+carry. Rather than adding a field to CoreModel (out of this WP's scope),
+`BackfillHorizonRecordStore` (`Backfill/BackfillTypes.swift`) is a tiny,
+separate, `UserDefaults`-backed key-value store (production:
+`UserDefaultsBackfillHorizonRecordStore`, namespaced
+`com.fitbridge.backfill.completedHorizon.<type>`) recording only "the
+deepest horizon this type has fully completed." `BackfillCoordinator
+.runNextChunk(for:)` consults both: `backfillCursor` for the resumable
+chunk-walk position, the side-store to disambiguate a `nil` cursor and to
+compute the correct resume point on an "extend" (the *old* horizon's own
+boundary date, not `min(lastSyncedAt, now)` again). **Gap flagged
+explicitly, per the handoff protocol's "if you truly need a new field,
+document it instead of editing CoreModel" clause:** ideally `SyncState`
+would carry a `completedBackfillHorizon: String?` field alongside
+`backfillCursor` itself; this side-store is the pragmatic substitute.
+
+**`BackfillHorizon`:** `enum` with `.days30/.days90/.year1/.all` (`.all`
+resolves to a fixed practical floor, the Unix epoch, guaranteeing the walk
+terminates in a finite number of chunks rather than claiming data really
+exists that far back); `.defaultHorizon = .days90` per architecture.md D5.
+Narrowing to a shallower horizon after a deeper one already completed is a
+documented no-op (this coordinator never deletes already-imported history —
+deletion is WP-35's job).
+
+**Round-robin (WP-15 step 1):** `runRound()` calls `runNextChunk(for:)`
+exactly once per configured type, in order — one chunk per type per round,
+by construction, so no type can outrun another within a round.
+`BackfillCoordinator.start()` spawns a `Task(priority: .utility)` background
+loop (WP-15 step 2: "runs at `.utility` priority") that calls `runRound()`
+repeatedly with a `GoogleHealthClient.BackoffSleeper`-injected delay between
+rounds (reused directly from `GoogleHealthClient`'s own seam — no parallel
+sleeper protocol invented) until every type reports done or the coordinator
+is paused; `pause()`/`resume()` and `setHorizon(_:)` are the UI's three
+control-surface calls.
+
+**UI (`FitBridgeApp/Backfill/`):** `BackfillView` — a horizon `Picker`, a
+pause/resume `Button`, and a `List` of `BackfillTypeRow`s (one per type,
+"Mar 2026 … done" style progress text per WP-15's own illustrative phrasing,
+"Reached Mar 2026" mid-walk, "Not started yet" before the first chunk, plus
+an error row mirroring `SyncTypeRow`'s existing error-rendering convention).
+Deliberately **polls** `BackfillCoordinator.statuses()` on a 1.5 s `.task`
+loop rather than driving off `@Query` — `BackfillTypeStatus` folds in the
+actor's own `horizon`/`isPausedNow` state and the `UserDefaults`-backed
+completed-horizon record, neither of which is SwiftData-observable, so a
+`@Query`-only approach could show a fresh cursor next to a stale "is this
+actually done for the *current* horizon" answer. `BackfillTypeRow` follows
+`SyncTypeRow`/`LocalOnlyTypeRow`'s established "identifiers only on leaves"
+rule (own progress.md notes on container identifiers clobbering children's).
+
+**Two coordination-point edits outside `Backfill/`/`Backfill/`, both flagged
+in-code and here:** (1) `AppEnvironment.swift` gained one new stored property,
+`backfillCoordinator: BackfillCoordinator`, constructed with the same
+`reconcileClient`/a fresh `HealthKitWriter()`/the same `modelContainer`
+`syncEngine` already uses (so both pipelines dedupe against the same
+underlying HealthKit store, D4), and `syncEngine` itself passed as the
+`busyProbe:` (its zero-code `BackfillBusyProbe` conformance). This file
+wasn't named as any other WP's territory in this WP's brief, but *is* a
+DI root other WPs might reasonably also touch — kept to one property + one
+init block, and verified (re-reading the file immediately before editing)
+that no other agent had a conflicting in-flight edit there at the time.
+(2) `DashboardView.swift` gained the one-line nav hook the handoff brief
+explicitly asked for: `Section { NavigationLink("Historical Backfill",
+destination: BackfillView()) }`, placed after the existing sections rather
+than inside the `.toolbar` block WP-17 was concurrently editing there —
+confirmed via the addendum WP-17 itself appended above that both edits
+landed without conflict.
+
+**Tests** (`Packages/SyncKit/Tests/SyncKitTests/Backfill/`, 27 new — the
+suite count jump from 178/16 to 205/24 combines these with WP-16's own
+concurrently-landed `BackgroundSyncPlanner` tests, none of which this WP
+touched): `BackfillChunkingTests` — exact chunk boundaries (a `.year1`
+horizon against the default 30 d chunk size produces 13 chunks, 12 full +
+one partial clipped exactly to the horizon date, no gap/overlap between any
+two consecutive windows) and kill-resume (run three chunks, discard the
+`BackfillCoordinator` instance entirely without calling `stop()`/`pause()`,
+reconstruct a brand-new one from the same `ModelContainer` + same horizon
+store, verify the fourth chunk resumes from exactly the persisted checkpoint,
+not `min(lastSyncedAt, now)` again). `BackfillHorizonExtensionTests` —
+completing a 30 d horizon then extending to 90 d resumes from the old 30 d
+boundary rather than re-walking `[now-30d, now]` a second time, and reaches
+`.alreadyDone` with the completed-horizon record correctly updated to 90 d;
+narrowing to a shallower horizon after a deeper one is already complete is a
+verified no-op (no new reconcile calls, cursor stays `nil`).
+`BackfillRoundRobinTests` — a "huge" type (13 chunks needed) and a "small"
+one (1 chunk, via a seeded `lastSyncedAt` already near the horizon) share
+one coordinator; round 1 is asserted to advance *both* by exactly one chunk
+(proving round-robin isn't starving either direction), and the small type is
+asserted to report `.alreadyDone` on every subsequent round while the big
+type keeps making steady one-chunk-per-round progress until it too finishes
+(14 rounds total for 13 chunks — the extra round is the one that discovers
+completion). `BackfillIdempotencyTests` — a `BackfillBusyProbe` reporting a
+type busy suspends it with zero reconcile calls and zero cursor movement
+(clearing busy makes the identical chunk available again); and, reusing a
+*shared* `MockHealthStore`/`HealthKitWriter` between a real `SyncEngine.sync
+(type:)` run and a subsequent overlapping `BackfillCoordinator` chunk with
+the same external ID, the store ends up with exactly one sample and exactly
+one `save` call — proving the dedupe path (architecture.md D4's batched
+existence diff) is genuinely shared, not reimplemented, between the two
+pipelines.
+
+**Verification performed in this session:** `swift test -Xswiftc
+-warnings-as-errors` in `Packages/SyncKit` — **205 tests / 24 suites, 0
+failures, 0 warnings** (run twice consecutively for flakiness, stable both
+times). Re-ran the same command in each of `Packages/CoreModel` (15/6),
+`Packages/Secrets` (14/3), `Packages/GoogleHealthClient` (35/7), and
+`Packages/CoachKit` (1/0) without editing any of them — all five packages
+pass together, 0 failures, 0 warnings. `xcodegen generate` +
+`xcodebuild build -scheme FitBridge -destination
+'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'` ("iPhone 17 Pro" simulator,
+iOS 26.4.1, matching prior WPs' device) — **BUILD SUCCEEDED**, zero errors,
+zero warnings, including the new `Backfill/` app-target files.
+`xcodebuild build-for-testing` — **TEST BUILD SUCCEEDED**. `xcodebuild test`
+(full `FitBridge` scheme) — **TEST SUCCEEDED**: `FitBridgeTests` 17/2 (WP-17's,
+unaffected), `FitBridgeUITests` 3/3 (`DashboardUITests` ×2, `OnboardingUITests`
+×1), 0 failures. **One transient, unrelated failure hit and diagnosed rather
+than "fixed," per the handoff protocol:** an initial `xcodebuild test` run
+reported `TEST FAILED` with `OnboardingUITests` crashing/timing out during
+its very first step (waiting for `onboarding.welcome.continue`, before this
+WP's own `BackfillView` is ever reachable) with repeated `XCTAS Error:
+Error getting main window Unknown kAXError value -25218` — a known
+Simulator/accessibility-automation-session instability, not a code issue
+(confirmed: re-running the identical test in isolation reproduced the exact
+same crash-and-restart pattern at the exact same step). `xcrun simctl
+shutdown` + `boot` on the same simulator cleared it completely — a
+subsequent full `xcodebuild test` run passed cleanly end-to-end with no code
+changes in between, confirming the failure was simulator-session state, not
+this WP's (or any other WP's) code.
+
+**Deliberately deferred, as scoped:** wiring the background `.utility`-priority
+walk to actually *start* automatically at app launch (this session has
+`BackfillView.task` call `start()` on appear instead, so the walk begins
+when the user opens the new screen, not at cold launch) — deliberately kept
+this way to avoid a second background-task-registration concern competing
+with WP-16's own `BGAppRefreshTask` wiring in `FitBridgeApp.swift`, a file
+this WP does not touch; a future WP could call `backfillCoordinator.start()`
+once from `FitBridgeApp.init()` or a `BGProcessingTask` (the plan's own
+WP-16 step 3 optionally mentions this) if always-on backfill without a user
+visiting the screen first is desired. `MappedObject.workout`/`.correlation`
+routing inside `BackfillCoordinator.processPage` deliberately mirrors
+`SyncEngine.processPage`'s own current behavior (workouts counted as skipped
+pending WP-12b's conflict-resolution-before-write wiring; correlations flow
+through the same batch path) rather than diverging or fixing that
+pre-existing gap, which is out of this WP's scope. No `HealthKit`-authorization
+UI change was needed (backfill reuses whatever read/write authorization the
+existing onboarding flow already requested).
+
+## WP-16 · Background sync
+
+Built `Packages/SyncKit/Sources/SyncKit/BackgroundSync/BackgroundSyncPlanner.swift`
+(new folder, this WP's alone) plus edits scoped to exactly `FitBridgeApp/FitBridgeApp.swift`
+in the app target, per the handoff brief's collision-avoidance instructions. **SyncKit
+side** — three pure, `nonisolated`, HealthKit-and-BackgroundTasks-free pieces, following
+the pure/impure split every prior SyncKit WP established: `SyncStateSnapshot` (a plain
+`{ lastSyncedAt: Date? }`, not the real SwiftData `SyncState`, so the planner needs no
+`ModelContext`); `dueTypes(allTypes:syncStates:now:minInterval:) -> [Type]` (generic over
+any `Hashable`, not hard-coded to `GoogleDataType`, per the brief's "(or similar)"
+latitude) — a type is due if never synced or `now - lastSyncedAt >= minInterval`, and the
+result is ordered **most-overdue-first** (never-synced sorts as `.infinity` staleness;
+ties preserve `allTypes`' original order via Swift's stable sort) so a budget-truncated
+run always serves the neediest types first; `BackgroundSyncBudget` (`hasRemainingBudget
+(elapsed:) -> Bool` over a `limit`, default 20s) and `BackgroundSyncConfiguration`
+(bundles `minInterval` default 15 min — matching architecture.md §1's "~15 min" Google
+sync cadence —, `budget`, and `reschedulingInterval` default 30 min, mirroring
+`SyncConfiguration`'s own centralize-the-constants precedent); and
+`shouldRescheduleBackgroundSync(after: [SyncOutcome]) -> Bool`, which always returns
+`true` — a function, not just a comment, specifically so the "always reschedule, even on
+failure" invariant (stated twice in the plan) is regression-tested (empty/all-ok/all-error/
+mixed outcome arrays) without any `BGTaskScheduler` dependency. **21 new tests**
+(`Tests/SyncKitTests/BackgroundSync/BackgroundSyncPlannerTests.swift`): never-synced,
+recently-synced, stale, exact-boundary (inclusive) and one-second-inside-boundary
+(exclusive) cases; a mixed-state ordering test; tie-order-preservation; empty-input and
+no-due-types edge cases; budget under/at/beyond-limit; and the reschedule invariant across
+all four outcome shapes.
+
+**App-target side (`FitBridgeApp.swift` only, per the brief's file-scope restriction —
+did not touch `AppEnvironment.swift`, `Settings/` (WP-17), or `Backfill/` (WP-15)):**
+`FitBridgeApp.init()` constructs `AppEnvironment` (unchanged), then — still on
+`MainActor`, synchronously, before `init()` returns, matching Apple's "register before
+`applicationDidFinishLaunching` returns" contract translated to a SwiftUI-lifecycle app
+with no `UIApplicationDelegateAdaptor` — captures `environment.modelContainer`,
+`environment.syncEngine`, and `GoogleDataType.allCases.filter { $0.writability != .skip }`
+into a new `private struct BackgroundSyncLaunchContext: Sendable`, then calls
+`FitBridgeBackgroundSync.registerLaunchHandler(context:)` and `.scheduleNextRun()` (the
+"at launch" half of "schedule next... at launch AND in the handler"). A new private enum
+`FitBridgeBackgroundSync` (all members `nonisolated`) owns: `registerLaunchHandler`
+(`BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.fitbridge.sync.refresh",
+using: nil) { ... }`); `scheduleNextRun` (submits a `BGAppRefreshTaskRequest`, catching and
+logging — never crashing on — `.unavailable`/`.notPermitted`/`.tooManyPendingTaskRequests`);
+`handleLaunch(_:context:)` (the actual launch handler: reschedules **unconditionally as
+its very first statement**, before any sync work starts, then runs `run(context:)` in a
+detached `Task`, wires `task.expirationHandler` to cancel it, and calls
+`task.setTaskCompleted(success:)` from a second detached `Task` once the first resolves);
+and `run(context:)` (builds a `[GoogleDataType: SyncStateSnapshot]` from a fresh
+`ModelContext` — mirroring `SyncEngine.performSync`'s own per-call-context pattern — asks
+`dueTypes(...)` which types are due, then calls `SyncEngine.sync(type:)` **one type at a
+time**, most-overdue-first, checking `BackgroundSyncBudget.hasRemainingBudget(elapsed:)`
+between types and stopping gracefully once the ~20s budget is spent).
+
+**"The list of P0+P1 GoogleDataType cases to sync" (the brief's phrase) is derived, not
+hand-duplicated:** `GoogleDataType.allCases.filter { $0.writability != .skip }` — every
+type with an actual destination by now (WP-11's full TypeMapper table, WP-12's exercise,
+WP-13's nutrition, WP-14's `LocalSample` routing) — rather than reusing
+`AppEnvironment.p0Types`/`.p1LocalOnlyTypes` (which live in the file this WP doesn't touch,
+and are narrower — the dashboard's own WP-14 comment already documents that its manual
+"Sync Now" deliberately excludes the four local-only types pending broader OAuth-scope
+consent). This is strictly the broader, more correct P1 set and never drifts from
+CoreModel's table as future types are added. **Known consequence, not a bug:** until a
+future WP widens onboarding's Google-scope request, background syncs for the
+not-yet-consented types (ECG/AZM/activeMinutes/IRN, and any P1 type outside the original
+four scopes) will show up as `.error` `SyncOutcome`s (401/403) every run — harmless and
+already the documented status quo (WP-14's dashboard comment says the same for the manual
+button), not something this WP introduced or needed to fix.
+
+**Concurrency-isolation decision (the WP's explicit "think this through" ask) — read
+`SyncEngine.swift`'s actual declaration first, did not assume:** `actor SyncEngine` is its
+own, distinct, **non**-`MainActor` actor (architecture.md §3's explicit list), and
+`sync(type:)`/`syncAll(types:)` **never throw** (confirmed from `SyncEngine.swift`'s own
+doc comments, not just WP-09/10's progress notes). Consequently the BG handler needs **no
+hop onto `MainActor`** to call it — entering a different, non-MainActor actor is symmetric
+regardless of the caller's own isolation, so hopping to `MainActor` first would only add a
+pointless round-trip. Every function in `FitBridgeBackgroundSync` is therefore declared
+`nonisolated`; the *only* `MainActor`-isolated step in this whole feature is the one-time
+DI capture in `FitBridgeApp.init()`. A related, non-obvious wrinkle surfaced only by
+compiling (not by reasoning): this app target's `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor`
+setting makes *every* declaration MainActor-isolated by default unless marked
+`nonisolated` — including plain `static let` string/struct constants and even
+`BackgroundSyncPlanner.swift`'s own `SyncStateSnapshot`/`BackgroundSyncBudget`/
+`BackgroundSyncConfiguration` struct *declarations* in SyncKit (which has the identical
+package default) — the compiler rejected calling `SyncStateSnapshot`'s memberwise-adjacent
+`init` from the `nonisolated` BG-handler path until the struct declarations themselves
+were marked `nonisolated`, not just the free functions operating on them; fixed by adding
+`nonisolated` to all three struct declarations (matching `SyncEngineTypes.swift`'s
+existing `nonisolated public struct SyncConfiguration` precedent, which this file had
+initially, incorrectly, only half-followed). Second wrinkle: `BGTask`/`BGAppRefreshTask`
+predates Swift concurrency and carries no `Sendable` annotation (verified against this
+toolchain's real `BGTaskScheduler.h`/`.apinotes`, not assumed) even though
+`BGTaskScheduler`'s own documented contract hands the launch handler exclusive,
+non-overlapping ownership of one task instance per invocation — capturing it into the
+completion `Task.detached` closure required a small `private struct BackgroundTaskBox:
+@unchecked Sendable { let task: BGAppRefreshTask }` wrapper (documented inline as
+reflecting that single-owner contract, not a real data race) plus `@preconcurrency import
+BackgroundTasks` (the compiler's own suggested fix once the box existed, for a residual
+diagnostic on `BGTaskRequest`'s properties).
+
+**Reschedule-on-every-path:** `scheduleNextRun()` is called from `init()` ("at launch")
+and, unconditionally, as `handleLaunch`'s very first statement — **not** duplicated into a
+success branch and a failure branch. This is deliberately stronger than "reschedule in
+both branches": it also covers the process being killed between the expiration handler
+firing and the completion `Task` ever resuming, since there is no branch left
+un-instrumented when there's no branching in the guarantee at all.
+`shouldRescheduleBackgroundSync(after:)` is additionally called and `assert`-checked (plus
+logged) at completion as a documented, testable confirmation of the same invariant — it
+never gates the actual reschedule call, since that guarantee must not depend on the
+completion closure ever running.
+
+**Budget/expiration — two complementary layers:** (1) proactive — `run(context:)` calls
+`SyncEngine.sync(type:)` one type at a time (not the bulk `syncAll(types:)`) so it can
+check `BackgroundSyncBudget` between types and stop gracefully with time to spare (the
+normal path); (2) reactive backstop — `task.expirationHandler` cancels the detached `Task`
+running that loop for the case where even the proactive check wasn't fast enough (one
+type's fetch alone overruns); Swift's cooperative cancellation propagates into
+`GoogleHealthClient`'s `URLSession` calls and `Task.sleep`-based backoff waits (both
+cancellation-aware), so an in-flight fetch fails promptly rather than running to
+completion. Neither layer preempts a single type's in-flight network call mid-request on
+its own — doing that would mean editing `SyncEngine.swift`, out of this WP's file scope —
+but since `sync(type:)` never throws and architecture.md D3's cursor semantics mean an
+untouched or interrupted type simply keeps its previous `lastSyncedAt` and safely re-pulls
+the same window next time, this is exactly the "cursors make partial runs safe" behavior
+the plan describes, not a gap.
+
+**WP-15 coupling — deliberately not implemented, per this WP's explicit instructions:**
+WP-15's own progress entry (above) flags that `BackfillCoordinator.start()` could be
+called from `FitBridgeApp.init()` or a `BGProcessingTask` "if always-on backfill... is
+desired," naming this exact file. Per this WP's brief ("do NOT implement that coupling
+yourself"), it is **not wired in** — `FitBridgeBackgroundSync` only ever calls
+`SyncEngine.sync(type:)`/incremental sync, never `BackfillCoordinator`. **Extension point
+for a future WP:** `FitBridgeApp.init()` already has a natural, obvious slot right after
+`FitBridgeBackgroundSync.registerLaunchHandler`/`.scheduleNextRun()` to also register a
+second `BGProcessingTask` (per WP-16 step 3's "optionally a BGProcessingTask for backfill
+chunks") that calls into a `BackfillCoordinator` instance from `AppEnvironment` the same
+way this WP captures `syncEngine`/`modelContainer` — no structural change to this file
+would be needed, just a second `BackgroundSyncLaunchContext`-shaped capture and a second
+`register`/`submit` pair with a new identifier (which would first need adding to
+`project.yml`'s `BGTaskSchedulerPermittedIdentifiers`, currently only listing
+`com.fitbridge.sync.refresh`) and `UIBackgroundModes` including `processing` in addition
+to (see below) `fetch`.
+
+**Possible `project.yml` gap, flagged rather than silently edited or silently ignored (the
+brief was explicit: "do NOT edit project.yml" / "should not be needed"):**
+`UIBackgroundModes` currently lists only `processing` (WP-01, anticipating
+`BGProcessingTask`/backfill). `BGAppRefreshTask` conventionally also needs the `fetch`
+background mode declared (Xcode's Signing & Capabilities panel's separate "Background
+fetch" checkbox, distinct from "Background processing") for the system to actually wake
+the app for it — `BGTaskSchedulerPermittedIdentifiers` alone is enough for
+`register(...)`/`submit(...)` to compile, link, and not throw (confirmed: both succeeded
+and logged normally on-device^Wsimulator in this session's testing, submit failing only
+with the expected, benign `.unavailable` the Simulator always returns), but real
+background wake-ups on a physical device may not fire without `fetch` also present. Not
+verified against a physical device in this session (no such device available), and
+deliberately not fixed here since `project.yml` is out of this WP's stated scope — flagged
+for a human or a future WP with `project.yml` authority to add `fetch` alongside
+`processing` in `UIBackgroundModes`.
+
+**Manual verification, not automatable in this environment (per the plan's own text,
+explicitly not faked):** the real `BGTaskScheduler` register → submit → background-launch
+flow is verified via lldb's `e -l objc -- (void)[[BGTaskScheduler sharedScheduler]
+_simulateLaunchForTaskWithIdentifier:@"com.fitbridge.sync.refresh"]` against a running
+debug session — this requires an interactive debugger attached to a live app process and
+was **not run in this session** (this agent has no interactive lldb/Xcode-debugger
+access). What *was* verified, for real, in this session: (1) `swift test -Xswiftc
+-warnings-as-errors` in `Packages/SyncKit` — the new 21-test `BackgroundSyncPlannerTests`
+suite passes standalone and as part of the full package (**205 tests / 24 suites**, 0
+failures, 0 warnings, including WP-15's concurrently-landed `Backfill` tests); (2) a real
+`xcodebuild build`/`test -scheme FitBridge` on an iOS 26.4.1 simulator, which exercises
+`FitBridgeApp.init()` → `registerLaunchHandler`/`scheduleNextRun` for real on every test
+launch — device logs (`xcrun simctl spawn ... log show`) confirm
+`BackgroundTasks:Framework submitTaskRequest: <BGAppRefreshTaskRequest:
+com.fitbridge.sync.refresh, earliestBeginDate: ...>` fires on every app launch, followed by
+this WP's own redacted log line (`[com.fitbridge.app:BackgroundSync] Failed to schedule
+next background sync: Error Domain=BGTaskSchedulerErrorDomain Code=1`, i.e.
+`.unavailable` — exactly Apple's documented Simulator behavior, "doesn't support
+background processing," not a bug) — confirming the registration/schedule code path runs,
+compiles, and fails only in the one documented, expected, gracefully-handled way a
+simulator can. The actual background-launch handler body (`handleLaunch`/`run`) was
+**not** exercised end-to-end by a real background wake in this session (that's exactly the
+lldb-simulate-launch gap above) — its logic is covered indirectly by the pure planner
+tests plus code review, not by an integration test, and is flagged here as the honest
+boundary of what could be verified without interactive tooling.
+
+**Environment note, not a code defect (flagged per the handoff protocol since it cost
+real debugging time and could recur for the next agent sharing this Mac):** the first two
+`xcodebuild test` attempts against the simulator device UUID named in prior WPs'
+progress notes (`50EC4D33-...`, "iPhone 17 Pro") failed with app-process churn (rapid
+launch → clean `exit(0)` → relaunch, eventually exceeding `xcodebuild`'s own test-runner
+patience) that looked at first like a crash caused by this WP's new code. Investigation
+(device logs via `xcrun simctl spawn ... log show`, `ps` for concurrent processes) showed:
+(a) the app process's own exit was voluntary, `exit(0)`, never a signal/crash, with this
+WP's `BackgroundSync` log lines appearing normally beforehand; (b) a **different**
+Claude Code agent process (distinct `/tmp/claude-<id>-cwd` marker, i.e. WP-15 and/or
+WP-17's concurrent session) was independently running its own `xcodebuild test -scheme
+FitBridge -destination id=50EC4D33-...` against the **exact same booted simulator** at the
+same time — two/three concurrent `xcodebuild test` invocations hammering one simulator
+device explains the churn far better than a code bug would. Re-running against a
+different, previously-idle simulator (`08CDB949-...`, also "iPhone 17 Pro" — matching
+WP-10's originally-calibrated device model) produced a clean, single-process run with
+**TEST SUCCEEDED** both before and after the budget-loop refactor described above. No
+code changed because of this — noted here purely so a future agent seeing similar
+flakiness on this shared Mac checks for a concurrent `xcodebuild`/simulator user before
+assuming their own diff is at fault.
+
+**Deviations from the plan's literal text (handoff protocol's "blocked?" clause):** (1)
+`dueTypes(...)` is generic over `Type: Hashable`, not hard-coded to `[GoogleDataType]` as
+the plan's illustrative signature shows — the plan explicitly allows "(or similar)," and
+genericizing keeps `BackgroundSyncPlanner.swift` free of a `CoreModel` import despite
+SyncKit already depending on it elsewhere; `FitBridgeApp.swift` calls it at
+`Type == GoogleDataType` via ordinary inference. (2) The budget is enforced by iterating
+`SyncEngine.sync(type:)` per type rather than calling `syncAll(types:)` once — a
+structural choice (see "Budget/expiration" above) so `BackgroundSyncBudget` is genuinely
+consulted in the production path, not just unit-tested in isolation; `syncAll(types:)`
+itself was left completely untouched (still used by the dashboard's manual "Sync Now").
+(3) WP-16 step 3's "optionally a `BGProcessingTask` for backfill chunks" was left
+unimplemented, per this session's explicit instructions (see "WP-15 coupling" above) —
+documented as a follow-up extension point rather than attempted. **Verification summary:**
+`swift test -Xswiftc -warnings-as-errors` — CoreModel 15/6, Secrets 14/3,
+GoogleHealthClient 35/7, SyncKit 205/24 (21 new), CoachKit 1/0, all five still pass
+together with 0 failures/0 warnings; `xcodegen generate` + `xcodebuild build -scheme
+FitBridge` — **BUILD SUCCEEDED**, 0 warnings/errors; `xcodebuild test -scheme FitBridge`
+on a real iOS 26.4.1 simulator (`08CDB949-2DA3-4F1E-9F03-48FE5514320B`, "iPhone 17 Pro") —
+**TEST SUCCEEDED**, `FitBridgeTests` (1 placeholder + WP-17's 17 `SyncPreferences` tests,
+untouched by this WP) and `FitBridgeUITests` (3/3, including both pre-existing WP-10
+tests) all passing, re-run after the budget-loop refactor to confirm no regression.
+
+## Orchestrator note — post WP-15/16/17 reconciliation
+
+After WP-15, WP-16, and WP-17 landed concurrently, ran independent verification: all five
+packages green together (CoreModel 15/6, Secrets 14/3, GoogleHealthClient 35/7, SyncKit
+205/24, CoachKit 1/0 — 270 tests), and a solo `xcodebuild test -scheme FitBridge` on a
+single clean simulator (no concurrent agents) — **TEST SUCCEEDED**: `FitBridgeUITests` 3/3,
+`FitBridgeTests` 17/17 (the scheme-level XCTest summary line under-reports this suite
+since it's Swift Testing, not XCTest — verified with `-only-testing:FitBridgeTests` and
+full verbose output to confirm all 17 cases execute and pass).
+
+Reconciled a three-way discrepancy: WP-17 saw an app-exit during UI tests and attributed
+it to WP-16's `BGTaskScheduler` registration; WP-15 saw different flakiness and attributed
+it to an accessibility-server error; WP-16 diagnosed (correctly, confirmed independently
+here) that three agents were each running `xcodebuild test` against the same booted
+simulator instance simultaneously, causing process contention that presented differently
+to each observer. Solo re-run reproduced neither symptom. Separately confirmed the actual
+`BGTaskSchedulerErrorDomain Code=1` log line WP-16's handler emits during tests is a known,
+non-fatal Simulator limitation (BGTaskScheduler routinely refuses submission on the
+Simulator) — the handler already catches and logs it rather than crashing; no fix needed
+there.
+
+Fixed one small, uncontested gap WP-16 flagged: `project.yml`'s `UIBackgroundModes` only
+listed `processing` (needed for `BGProcessingTask`) but WP-16 registers a `BGAppRefreshTask`,
+which Apple's guidance pairs with `fetch`. Added `fetch` alongside `processing`. Verified
+`xcodegen generate` + `xcodebuild build` still succeeds with zero warnings.
+
+WP-18 (sync log + diagnostics) is next, now that WP-17's Settings screen exists for it to
+extend.
+
+## WP-18 · Sync log + diagnostics
+
+Built a new `Packages/SyncKit/Sources/SyncKit/Diagnostics/` folder (7 files), a new
+`Packages/SyncKit/Tests/SyncKitTests/Diagnostics/` folder (4 files), a new
+`FitBridgeApp/Diagnostics/` folder (2 files), one additive nav-link edit to
+`FitBridgeApp/Settings/SettingsView.swift`, one minimal additive hook in
+`Packages/SyncKit/Sources/SyncKit/SyncEngine/SyncEngine.swift`, and one minimal additive
+DI-wiring edit to `FitBridgeApp/DI/AppEnvironment.swift` (justified below). Every other
+SyncKit subfolder named read-only in this WP's brief (`TypeMapper/`, `HealthKitWriter/`,
+`HealthKit/`, `Routing/`, `Backfill/`, `BackgroundSync/`), plus `FitBridgeApp.swift` and
+the app-target `Backfill/` folder, were not touched.
+
+**Ring buffer: file-backed JSON, not a second SwiftData model.** `SyncLogEntry`
+(`Diagnostics/SyncLogEntry.swift`) is a pure `{id, timestamp, dataType, status, itemCount,
+errorMessage}` struct; `SyncLogStore` (`Diagnostics/SyncLogStore.swift`) is an `actor`
+holding a capped `[SyncLogEntry]`, mirrored to disk via an injected `SyncLogPersisting`
+seam (`Diagnostics/SyncLogPersistence.swift`) whose production conformer,
+`FileSyncLogPersistence`, writes one JSON array to
+`Application Support/FitBridge/SyncLog.json` (a sibling of `CoreModel.store`, `NSFileProtectionComplete`
+applied identically to `CoreModel.swift`'s own on-disk store, `#if os(iOS)`-guarded for
+the same reason that file documents). Chose file-backed over "a new lightweight SwiftData
+model" (the WP's other offered option) because: (1) `CoreModel.modelTypes`'s schema array
+is what the app's one `ModelContainer` is built from, and `CoreModel` is read-only for
+this WP — a new model would either need to join that closed schema or stand up an entirely
+separate second `ModelContainer`/store purely to hold one flat, non-relational record type
+nothing else ever queries; (2) ring-buffer eviction (append, then evict-oldest-past-cap) is
+a two-line array operation with a plain JSON array, versus SwiftData's fetch/sort/delete
+dance for the same operation, for a data shape with no relational structure at all.
+**Cap and eviction policy:** `SyncLogStore.defaultCapacity = 500`, strict FIFO (oldest
+entries evicted first via `removeFirst(overflow)` once appending would exceed the cap,
+never size/LRU/random). Sized against this app's own worst-case emission rate — one entry
+per `GoogleDataType` per completed `SyncEngine.sync(type:)` run, ~26 syncable types
+(CoreModel's non-`.skip` count, matching `AppEnvironment.backfillTypes`'s own derivation),
+triggered at most every ~15 min (`BackgroundSyncConfiguration.minInterval`) plus manual
+"Sync Now" taps — comfortably covering several days of activity before the oldest entries
+roll off. `NullSyncLogPersistence` is the in-memory-only test/preview double; `AppEnvironment`
+picks it over `FileSyncLogPersistence` whenever `launchConfiguration.useInMemoryContainer`
+is set (the same flag that already forces an in-memory `ModelContainer` for UI tests), so
+UI test runs never write a real `SyncLog.json` either.
+
+**Redaction strategy, decided and justified per the brief's explicit ask: denylist-of-
+token-shaped-patterns, not allowlist-of-safe-fields.** `SyncLogRedactor`
+(`Diagnostics/SyncLogRedactor.swift`) is the one filter, applied to the one free-text
+field a `SyncLogEntry` carries, `errorMessage`. Every *other* field
+(`dataType`/`status`/`itemCount`/`timestamp`) is a structured, non-free-text type an
+allowlist doesn't even apply to — there is nothing to allowlist within a `GoogleDataType`
+case or an `Int` count, so no filter runs on them at all; the allowlist *is* the strategy
+for those fields, implicitly, by construction. `errorMessage`, though, is
+`String(describing: error)` over whatever surfaced from the *entire* pull → map → write
+pipeline (`GoogleHealthClientError`, `HealthKitWriterError`, a SwiftData error, a plain
+`URLError`, or any future error type) — there is no fixed, enumerable "safe shape" to
+allowlist for arbitrary text, so the only workable strategy is pattern-matching *known
+token shapes* (Google OAuth access tokens `ya29.*`, refresh tokens `1//*`, Google API keys
+`AIza*`, Anthropic keys `sk-ant-*`, OpenAI-style keys `sk-*`, generic `Bearer <token>`
+headers) plus a conservative catch-all (any 24+-character run of token-alphabet characters
+`[A-Za-z0-9._-]`) for unknown/future token shapes, replacing every match with a fixed
+`[REDACTED]` marker. Chose over-redaction of an occasional benign long identifier over
+under-redaction of a real secret — the correct direction for this trade-off. This is
+defense-in-depth, not the primary safeguard: `GoogleAuthManager`'s own `GoogleAuthError`
+already never interpolates a raw token into its `description` (WP-05's own "redaction
+tripwire" test) — this filter exists for the unaudited remainder of the error surface, and
+for genuine defense-in-depth even where it has already been audited.
+
+**The one hook added to `SyncEngine.swift` (minimal, additive, exactly the shape the
+brief itself suggested):** a new `private let runRecorder: (any SyncRunRecording)?`
+property and matching `init` parameter, defaulting to `nil` — every pre-existing
+`SyncEngine(...)` call site (every WP-09..17 test, and `AppEnvironment` before this WP)
+keeps compiling and behaving identically. `SyncRunRecording`
+(`Diagnostics/SyncRunRecording.swift`) is a one-method protocol
+(`func record(_ outcome: SyncOutcome) async`); `performSync` gained exactly two
+`await runRecorder?.record(outcome)` lines, one immediately before each of its two
+existing `return` statements (the `.ok` success path and the `.error` catch path) — no
+other control flow in that file changed. The production conformer,
+`SyncEngineLogRecorder`, builds a `SyncLogEntry` from the outcome (timestamp via an
+injected `SyncClock`, never a direct `Date()` call, so it stays testable against a virtual
+clock exactly like the rest of this file), redacts `errorMessage` through
+`SyncLogRedactor.redact(_:)` before it ever reaches `SyncLogEntry`'s initializer, appends
+it to a `SyncLogStore`, and mirrors it into `os.Logger` (`DiagnosticsLog.sync`).
+
+**`AppEnvironment.swift` wiring — a second minimal, additive, explicitly-flagged edit,
+following WP-15's own established precedent for this exact file.** WP-18's own brief
+poses the question directly ("does SyncOutcome already carry what's needed and can you
+subscribe/record without editing SyncEngine.swift itself?") and its answer path leads
+to "an optional injected `SyncRunRecording` callback... on SyncEngine" — but that hook
+still needs a production wire-up, and every other production consumer of `SyncEngine`
+(`DashboardView`'s `syncNow()`, `FitBridgeApp`'s background handler) is either out of this
+WP's stated file scope or fenced off entirely. `AppEnvironment.swift` is the app's one DI
+root and is *not* in this WP's forbidden-files list (unlike `FitBridgeApp.swift` and the
+app-target `Backfill/` folder, which are named explicitly) — and WP-15 already established
+that a single new stored property plus one new constructor argument on the existing
+`SyncEngine(...)` call, clearly flagged in a doc comment, is an acceptable minimal
+DI-wiring edit to this specific file (see its own progress.md entry: "This file wasn't
+named as any other WP's territory in this WP's brief, but *is* a DI root other WPs might
+reasonably also touch"). Added exactly one property (`let syncLogStore: SyncLogStore`,
+constructed with `NullSyncLogPersistence` under UI-test launch configs, `FileSyncLogPersistence`
+otherwise) and one new argument to the pre-existing `SyncEngine(...)` call
+(`runRecorder: SyncEngineLogRecorder(store: syncLogStore)`) — nothing else in that file
+changed. No other agent is running concurrently in this session (confirmed by the task
+framing), so there was no collision risk to reconcile, unlike WP-15's own session.
+
+**`BackfillCoordinator`/`Backfill/` — deliberately NOT wired in, per the hard scope fence,
+not an oversight.** The brief's deliverable 2 asks to "record backfill chunk completions
+from WP-15's `BackfillCoordinator` if a similarly clean hook exists there (same rule:
+minimal additive change only if unavoidable)" — but this WP's own constraints list
+`Backfill/` among the explicitly read-only SyncKit subfolders, with no carve-out (unlike
+the framing for `SyncEngine.swift`, which the brief explicitly anticipated a minimal hook
+in). `BackfillCoordinator` has no existing recording seam reachable from outside that
+file (`runNextChunk`/`runRound` are called only from its own private `runLoop()`; nothing
+external observes a `BackfillChunkOutcome` stream), so recording backfill-chunk completions
+would require editing `Backfill/BackfillCoordinator.swift` itself — squarely inside the
+fenced-off folder. Per the handoff protocol's "if you believe another module must change,
+stop and report instead of editing it" rule, this is reported rather than done: backfill
+chunk completions are **not** recorded into the sync log in this WP. `BackfillTypeStatus`
+(`BackfillCoordinator.statuses()`) remains the sole progress signal for backfill (surfaced
+in `BackfillView`, unchanged), and `DiagnosticsLog.backfill` is declared (see below) ready
+for whichever future WP owns `Backfill/` to wire in.
+
+**`os.Logger` categories (`Diagnostics/DiagnosticsLog.swift`).** Checked for WP-16's
+existing usage before adding anything, per the brief's explicit instruction: `FitBridgeApp.swift`'s
+`FitBridgeBackgroundSync` enum already declares `Logger(subsystem: "com.fitbridge.app",
+category: "BackgroundSync")`, `private` to that file and unreachable from this package
+(different module entirely). `DiagnosticsLog.background` reuses the identical subsystem
+string and category name (the closest thing to "reuse, don't duplicate" achievable across
+a package/app-target boundary) rather than inventing a second near-identical spelling;
+this WP adds no new call site for it (WP-16's own lines already cover background-sync
+logging). `DiagnosticsLog.sync` is the one category with a real call site in this WP
+(`SyncEngineLogRecorder.emit(_:)` — `.log` for `.ok`, `.error` for `.error`, every
+interpolated field `.public` since `dataType`/`status`/`itemCount` are structurally safe
+and `errorMessage` has already been through `SyncLogRedactor`). `DiagnosticsLog.backfill`
+and `.auth` are declared for the same one-category-per-subsystem forward consistency but
+have no call site in this session — `Backfill/` is read-only (see above) and
+`GoogleHealthClient` (which would own auth-flow logging) is likewise read-only for this WP.
+
+**Settings → "Sync Log" viewer (`FitBridgeApp/Diagnostics/`).** `SyncLogView.swift` reads
+`appEnvironment.syncLogStore` (matching `BackfillView`'s own "read the DI root's actor
+directly" convention) and polls `recentEntries()` on a `.task` loop (3 s interval — this
+data changes far less often than backfill progress, so a slower poll than `BackfillView`'s
+1.5 s is appropriate) plus `.refreshable` pull-to-refresh; not `@Query`-driven since
+`SyncLogStore` is a plain actor, not SwiftData-backed (documented in that file's header,
+mirroring `BackfillView`'s own identical reasoning for its own actor-backed state).
+`SyncLogRow.swift` renders one row (status icon, type, relative timestamp, item count,
+redacted error text if present) following `SyncTypeRow`/`BackfillTypeRow`'s established
+"dumb row, smart container" split and "identifiers only on leaves" accessibility-ID rule.
+Export uses SwiftUI's `ShareLink` over `SyncLogTextExporter.export(_:)`
+(`Diagnostics/SyncLogTextExporter.swift`, SyncKit — pure, package-tested, newest-first,
+one header line + one line per entry: ISO-8601 timestamp, type, status, item count,
+error text only when present). `SettingsView.swift` gained exactly one new `Section` with
+one `NavigationLink("Sync Log", destination: SyncLogView())` between the existing
+disclaimer section and the per-scope toggle sections — nothing above or below it in that
+file changed.
+
+**Tests.** New: `Packages/SyncKit/Tests/SyncKitTests/Diagnostics/` (23 tests) —
+`SyncLogRedactorTests` (9: each named token shape individually — Google access/refresh
+token, Google API key, Anthropic key, OpenAI-style key, bearer header — the catch-all
+opaque-run fallback for an unnamed shape, ordinary error prose left untouched, and
+multiple tokens in one message all redacted); `SyncLogStoreTests` (5) — the WP's required
+ring-buffer-capping test (`pushingMoreEntriesThanTheCapEvictsOldestFirstAndRetainsExactCount`:
+8 pushes through a cap of 5 leaves exactly 5, oldest 3 evicted, newest 5 retained in
+order, exact count asserted both via `recentEntries().count` and `store.count()`), plus
+under-cap behavior, a `limit:`-windowed read, `clear()`, and a persistence-round-trip test
+proving a freshly reloaded store re-applies the same cap defensively; `SyncRunRecordingTests`
+(6) — the WP's required log-entry-redaction test at two levels (recorder→store directly,
+and end-to-end through a real `SyncEngine.sync(type:)` failure with a token-shaped
+`GoogleHealthClientError.decodingFailed(...)` message), a plain-message-passthrough
+control, a successful-outcome-has-no-error-message case, and two `SyncEngine`-wiring
+tests proving the new `runRecorder:` hook fires exactly once per completed run (success
+and failure) plus a regression test that omitting `runRecorder:` entirely behaves exactly
+as before; `SyncLogTextExporterTests` (3) — newest-first ordering, header shape, and a
+redaction-survives-export check (not one of the two explicitly required "Tests:" lines,
+added since this is new, real, pure logic backing the export deliverable). **Verification
+performed in this session:** `swift test -Xswiftc -warnings-as-errors` in
+`Packages/SyncKit` — **228 tests / 28 suites, 0 failures, 0 warnings** (grown from 205/24;
+23 new). Re-ran the same command in each of `Packages/CoreModel` (15/6), `Packages/Secrets`
+(14/3), `Packages/GoogleHealthClient` (35/7), and `Packages/CoachKit` (1/0) without editing
+any of them — all five packages pass together, 293 tests total, 0 failures, 0 warnings.
+
+**App build/test.** Simulator contention precedent from prior WPs' notes: shut down all
+booted simulators and rebooted a single previously-idle one
+(`08CDB949-2DA3-4F1E-9F03-48FE5514320B`, "iPhone 17 Pro," the same device WP-16's
+post-reconciliation note used) before building, since no other agent should be sharing it
+this session. `xcodegen generate` + `xcodebuild build -scheme FitBridge -destination
+'id=08CDB949-2DA3-4F1E-9F03-48FE5514320B'` — **BUILD SUCCEEDED**, zero errors, zero
+warnings, including the new `Diagnostics/` app-target files. `xcodebuild test` (full
+`FitBridge` scheme) — **TEST SUCCEEDED**: `FitBridgeUITests` 3/3 (`DashboardUITests` ×2,
+`OnboardingUITests` ×1, all pre-existing and unaffected), `FitBridgeTests` — re-run with
+`-only-testing:FitBridgeTests` and verbose output (per WP-16/17's own note that the
+scheme-level XCTest summary under-reports a Swift Testing suite) confirms **17 tests / 2
+suites, 0 failures** (WP-17's `SyncPreferences` suite, untouched by this WP — this WP
+added no new `FitBridgeTests` file, since its two required "Tests:" lines are both
+package-level pure-logic tests already covered in `Packages/SyncKit`).
+
+**Deviations / judgment calls (handoff protocol's "blocked?" clause):** (1) chose
+file-backed JSON over a second SwiftData model for the ring buffer (justified above);
+(2) `AppEnvironment.swift` received a second minimal DI-wiring edit beyond this WP's
+literal "your scope" bullet list (which named only the two new folders + the one
+`SettingsView.swift` nav edit) — justified above as the necessary, precedented production
+wiring point for the `SyncEngine.swift` hook the same bullet list's surrounding prose
+explicitly anticipates; (3) `BackfillCoordinator` chunk completions are **not** recorded,
+reported rather than implemented, since doing so would require editing the explicitly
+fenced-off `Backfill/` folder with no available external hook — flagged as a gap for
+whichever future WP owns that folder; (4) added `SyncLogTextExporterTests` beyond the two
+literally-required "Tests:" lines, since the export deliverable is real, pure, and
+otherwise unverified. **Deliberately deferred:** a "clear log" UI action (the `SyncLogStore.clear()`
+primitive exists, kept for symmetry/testability, but no button calls it — not asked for);
+distinguishing "manual Sync Now" vs. "background sync" vs. "backfill" as a `source` field
+on `SyncLogEntry` (the `SyncEngine.sync(type:)` hook point structurally can't tell what
+triggered a run, and adding a trigger-source parameter to `SyncEngine.sync(type:)` itself
+would be a larger, non-additive change than this WP's scope allows — every recorded entry
+is simply "a completed incremental sync run for this type," which matches the plan's own
+"timestamps, types, counts, error strings" wording without needing a trigger label).
+
+**Phase P1 rollup.** With WP-18 complete, all of WP-11 through WP-18's stated "Done when"
+criteria are met and independently re-verified together in this session: WP-11's full
+TypeMapper table and WP-12/12b's exercise/conflict-resolution pipeline, WP-13's nutrition
+correlations, and WP-14's LocalSample/badge routing all still pass their own golden/property
+suites inside this session's 228-test SyncKit run; WP-15's chunked backfill and WP-16's
+background sync both still pass their own suites and their own app-target build/test
+evidence stands unchanged (this WP touched neither's source, only re-verified they still
+build/pass alongside the new Diagnostics code); WP-17's settings/incremental-scope screen
+now also hosts this WP's Sync Log entry point, verified via the same `xcodebuild test` run.
+One caveat carried forward from every prior P1 WP's own notes, not introduced here: the
+real Google Cloud OAuth client (P-1.3) remains outstanding, so no WP in this phase has
+been exercised against a real Google account end-to-end — every "Done when" that depends
+on that (WP-11's real-payload confirmations, WP-15/16/17's real-consent flows) is verified
+against fixtures/stubs only, a pre-existing, explicitly-tracked gap, not a new one. With
+that caveat, Phase P1 ("full sync") is functionally complete and ready for Phase P2.

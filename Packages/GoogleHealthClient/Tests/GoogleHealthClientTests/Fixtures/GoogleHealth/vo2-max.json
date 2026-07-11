@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). VO2 Max is a Sample (S) type per base-knowledge.md §3; value key `vo2_max.value` (field name assumed). Maps to HKQuantityTypeIdentifierVO2Max, unit mL/(kg*min) (base-knowledge.md §5). See run-vo2-max.json for the sibling Google type (`Run VO2 Max`) that shares this same HealthKit target. Mirrored in SyncKit's TypeMapperFixtures.vo2MaxPoint(dataType: .vo2Max).",
+  "point": [
+    {
+      "dataPointId": "vo2-0001",
+      "startTime": "2026-07-05T09:00:00Z",
+      "endTime": "2026-07-05T09:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "vo2_max.value": 42.3
+      }
+    }
+  ],
+  "nextPageToken": null
+}

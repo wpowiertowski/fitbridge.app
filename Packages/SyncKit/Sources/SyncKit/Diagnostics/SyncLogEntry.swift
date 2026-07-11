@@ -1,0 +1,55 @@
+// SyncLogEntry.swift
+//
+// WP-18 (implementation-plan.md): the ring-buffer log's one record shape --
+// "timestamps, GoogleDataType, item counts, status, error strings." Every
+// field here is either a structurally-safe type (`GoogleDataType`/
+// `SyncStatus` enums, `Int`, `Date` -- none of which can carry a health
+// value or a secret, since none of them is free-text derived from external
+// input) or the one free-text field, `errorMessage`, which is *never*
+// stored un-redacted -- see `SyncLogRedactor.swift` for why a denylist-
+// pattern filter (not an allowlist) is this file's chosen defense for that
+// one field, and `SyncRunRecording.swift` for the one call site that
+// constructs entries in production, which always redacts before this
+// initializer ever sees the message.
+//
+// architecture.md §4 D11: "Logs / analytics / crash reports carry counts,
+// types, and timestamps -- never health values, never tokens." This type is
+// the on-disk/in-memory shape that promise is checked against.
+
+import CoreModel
+import Foundation
+
+/// One completed `SyncEngine.sync(type:)` run, as recorded by
+/// `SyncRunRecording.swift`'s `SyncEngineLogRecorder`. `nonisolated` and
+/// `Codable`/`Sendable`/`Equatable`, matching every other pure value type in
+/// this package (`SyncOutcome`, `BackfillTypeStatus`, ...).
+nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiable {
+    public var id: UUID
+    public var timestamp: Date
+    public var dataType: GoogleDataType
+    public var status: SyncStatus
+    /// Same counting rule as `SyncOutcome.itemCount`/`SyncEngine`'s own doc
+    /// comment (SyncEngine.swift) -- a count of Google data points
+    /// processed, never a health value itself.
+    public var itemCount: Int
+    /// Already redacted (never the raw error text) by the time an entry
+    /// reaches this initializer in production -- see this file's header and
+    /// `SyncLogRedactor.swift`.
+    public var errorMessage: String?
+
+    public init(
+        id: UUID = UUID(),
+        timestamp: Date,
+        dataType: GoogleDataType,
+        status: SyncStatus,
+        itemCount: Int,
+        errorMessage: String? = nil
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.dataType = dataType
+        self.status = status
+        self.itemCount = itemCount
+        self.errorMessage = errorMessage
+    }
+}

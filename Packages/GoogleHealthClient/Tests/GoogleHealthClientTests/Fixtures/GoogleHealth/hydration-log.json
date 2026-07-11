@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). base-knowledge.md §3 records Hydration Log as a Session (Se) record type, but WP-11 only asks for a simple dietaryWater quantity mapping (not a session/correlation structure like Exercise or Food) -- this fixture is therefore shaped like the other Sample-type scalar-field fixtures (weight.json, height.json) rather than sleep.json's nested sessionPayload shape. Value key `hydration_log.liters` (field name assumed; liters chosen to match HealthKit's own dietaryWater base unit). Mirrored in SyncKit's TypeMapperFixtures.hydrationPoint().",
+  "point": [
+    {
+      "dataPointId": "hydration-0001",
+      "startTime": "2026-07-01T12:30:00Z",
+      "endTime": "2026-07-01T12:30:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "MANUAL_ENTRY"
+      },
+      "value": {
+        "hydration_log.liters": 0.5
+      }
+    }
+  ],
+  "nextPageToken": null
+}

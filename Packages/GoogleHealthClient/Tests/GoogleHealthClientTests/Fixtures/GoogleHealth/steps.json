@@ -1,0 +1,32 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule): base-knowledge.md §2 documents the resource pattern (users/me/dataTypes/{dataType}/dataPoints), the reconcile/dailyRollup methods, and that fields nest under `<data_type>.<field>` plus a `dataSource` wrapper (platform, device.displayName, recordingMethod) -- but not an exact response envelope. This fixture assumes a Google-API-conventional list envelope: a top-level `point` array plus `nextPageToken`, each point carrying `dataPointId`/`startTime`/`endTime` (RFC 3339), a `dataSource` object, and a `value` object whose keys are `<dataType.filterName>.<field>` (here `steps.count`). Steps is an Interval (I) type per base-knowledge.md §3, so each point covers a short interval rather than an instant.",
+  "point": [
+    {
+      "dataPointId": "steps-0001",
+      "startTime": "2026-07-01T00:00:00Z",
+      "endTime": "2026-07-01T01:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "steps.count": 482
+      }
+    },
+    {
+      "dataPointId": "steps-0002",
+      "startTime": "2026-07-01T01:00:00Z",
+      "endTime": "2026-07-01T02:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "steps.count": 129
+      }
+    }
+  ],
+  "nextPageToken": null
+}

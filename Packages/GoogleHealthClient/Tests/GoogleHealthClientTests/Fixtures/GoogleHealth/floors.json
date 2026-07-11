@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Floors is an Interval (I) type per base-knowledge.md §3; value key `floors.count` (field name assumed -- base-knowledge.md doesn't document Google's exact field name for this type, 'count' chosen for consistency with steps' `steps.count`). Mirrored in SyncKit's TypeMapperFixtures.floorsPoint().",
+  "point": [
+    {
+      "dataPointId": "floors-0001",
+      "startTime": "2026-07-01T08:00:00Z",
+      "endTime": "2026-07-01T09:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "floors.count": 6
+      }
+    }
+  ],
+  "nextPageToken": null
+}

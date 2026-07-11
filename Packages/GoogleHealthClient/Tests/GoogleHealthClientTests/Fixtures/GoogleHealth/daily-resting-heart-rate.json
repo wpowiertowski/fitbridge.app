@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Daily Resting Heart Rate is a Daily (D) record type per base-knowledge.md §3, assumed here to cover a full calendar-day interval (00:00Z-24:00Z) rather than an instant; value key `daily_resting_heart_rate.bpm`. Maps to HKQuantityTypeIdentifierRestingHeartRate (base-knowledge.md §5). Mirrored in SyncKit's TypeMapperFixtures.restingHeartRatePoint().",
+  "point": [
+    {
+      "dataPointId": "drhr-0001",
+      "startTime": "2026-07-01T00:00:00Z",
+      "endTime": "2026-07-02T00:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "daily_resting_heart_rate.bpm": 52
+      }
+    }
+  ],
+  "nextPageToken": null
+}

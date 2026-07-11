@@ -15,7 +15,7 @@ Companion docs:
 - [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md) — API facts and the type-mapping table (source of truth for data types).
 - [implementation-plan.md](implementation-plan.md) — phased work packages implementing this architecture.
 - [test-plan.md](test-plan.md) — unit/integration/UI/manual testing strategy.
-- [fitbridge-final-yachtclub.html](fitbridge-final-yachtclub.html), [FitBridgeTodayView-YachtClub.swift](FitBridgeTodayView-YachtClub.swift) — final "Today" screen design (Yacht club palette).
+- [Design/fitbridge-final-yachtclub.html](Design/fitbridge-final-yachtclub.html), [Design/FitBridgeTodayView-YachtClub.swift](Design/FitBridgeTodayView-YachtClub.swift) — final "Today" screen design (Yacht club palette).
 
 **Naming:** the product, app target, and module prefix are all **FitBridge**
 (`FitBridge` target, `fitbridge.*` metadata keys, `com.fitbridge.*` identifiers).

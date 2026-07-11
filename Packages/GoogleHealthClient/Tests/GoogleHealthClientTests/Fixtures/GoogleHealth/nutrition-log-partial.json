@@ -1,0 +1,20 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-13) -- companion to nutrition-log.json, same field-name/one-point-per-meal assumptions (see that fixture's own _comment). This is WP-13's required 'meal missing macros' scenario: only energy + protein reported (e.g. a quick log entry without a full carbs/fat breakdown) -- `nutrition_log.carbs_g`/`.fat_g` are simply absent from `value`, not present-as-zero/null, matching how blood-glucose-mgdl.json/blood-glucose-mmol.json each omit the other unit's field entirely rather than nulling it. SyncKit's TypeMapper.decideNutritionLog must build a 2-constituent HKCorrelation(.food) from this, not skip the point and not treat the missing fields as zero. Mirrored in SyncKit's TypeMapperFixtures.nutritionLogPoint(carbsGrams: nil, fatGrams: nil).",
+  "point": [
+    {
+      "dataPointId": "nutrition-0002",
+      "startTime": "2026-07-01T08:00:00Z",
+      "endTime": "2026-07-01T08:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "MANUAL_ENTRY"
+      },
+      "value": {
+        "nutrition_log.energy_kcal": 120,
+        "nutrition_log.protein_g": 18
+      }
+    }
+  ],
+  "nextPageToken": null
+}

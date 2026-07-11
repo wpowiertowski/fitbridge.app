@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Body Fat is a Sample (S) type per base-knowledge.md §3; value key `body_fat.percentage` (field name assumed). Same 0...100 percentage assumption as oxygen-saturation.json -- SyncKit's TypeMapper converts to HealthKit's required 0...1 fraction (base-knowledge.md §5: 'Body Fat ... fraction in HK'). Mirrored in SyncKit's TypeMapperFixtures.bodyFatPoint().",
+  "point": [
+    {
+      "dataPointId": "bf-0001",
+      "startTime": "2026-07-01T06:45:00Z",
+      "endTime": "2026-07-01T06:45:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Aria Air" },
+        "recordingMethod": "MANUAL_ENTRY"
+      },
+      "value": {
+        "body_fat.percentage": 22
+      }
+    }
+  ],
+  "nextPageToken": null
+}
