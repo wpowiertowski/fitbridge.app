@@ -31,6 +31,14 @@ playground.xcworkspace
 
 .build/
 
+# XcodeGen (WP-01): project.yml is the source of truth; the generated
+# .xcodeproj is reproducible via `xcodegen generate` and not committed, to
+# avoid pbxproj merge conflicts. FitBridgeApp/Info.plist and
+# FitBridge.entitlements ARE committed (they're xcodegen `info`/`entitlements`
+# outputs, but review-worthy content -- usage strings, capabilities).
+FitBridge.xcodeproj/
+*.xcworkspace/
+
 # CocoaPods
 #
 # We recommend against adding the Pods directory to your .gitignore. However

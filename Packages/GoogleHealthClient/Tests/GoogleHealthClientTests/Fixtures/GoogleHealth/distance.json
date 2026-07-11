@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived, same envelope assumption as steps.json (see its _comment). Added beyond WP-05 step 7's literal fixture list specifically to exercise the mm->m UnitNormalizer conversion the WP-05 Tests line requires ('mm→m normalization') -- base-knowledge.md §2's only named odd-base-unit example is Distance in millimeters. Raw wire value is 15000mm; UnitNormalizerTests / GoogleDataPointDecodingTests assert the decoded GoogleDataPoint.values[\"distance\"] == 15.0 (meters).",
+  "point": [
+    {
+      "dataPointId": "distance-0001",
+      "startTime": "2026-07-01T07:00:00Z",
+      "endTime": "2026-07-01T07:20:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "distance.distance": 15000
+      }
+    }
+  ],
+  "nextPageToken": null
+}

@@ -1,0 +1,8 @@
+{
+  "_comment": "Hand-derived: Google APIs conventionally wrap errors in a top-level `error` object with `code`/`message`/`status` (google.rpc.Status-style JSON mapping); base-knowledge.md doesn't document the Health API's specific error body, but this is the standard shape used across Google Cloud/Workspace REST APIs. Used as the response *body* for mocked 429 responses in ResilienceTests -- the HTTP status code and an out-of-band `Retry-After` header (set directly on the stubbed HTTPURLResponse, since that's a header, not JSON) are what actually drive backoff behavior; this body's content is not parsed by GoogleHealthClient (only the status code and header matter for control flow).",
+  "error": {
+    "code": 429,
+    "message": "Quota exceeded for quota metric 'dataPoints.reconcile' on this project.",
+    "status": "RESOURCE_EXHAUSTED"
+  }
+}

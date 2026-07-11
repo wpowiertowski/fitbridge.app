@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Height is a Sample (S) type per base-knowledge.md §3; value key `height.meters` (field name assumed; meters chosen to match HealthKit's own base unit for this identifier, avoiding an unconfirmed cm/in conversion -- same posture as WP-07's weight-unit note). Manual entry, Fitbit Aria Air, matching weight.json's device/source pairing. Mirrored in SyncKit's TypeMapperFixtures.heightPoint().",
+  "point": [
+    {
+      "dataPointId": "height-0001",
+      "startTime": "2026-07-01T06:45:00Z",
+      "endTime": "2026-07-01T06:45:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Aria Air" },
+        "recordingMethod": "MANUAL_ENTRY"
+      },
+      "value": {
+        "height.meters": 1.78
+      }
+    }
+  ],
+  "nextPageToken": null
+}

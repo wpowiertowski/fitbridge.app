@@ -1,0 +1,32 @@
+{
+  "_comment": "Hand-derived, same envelope assumption as steps.json (see its _comment). Heart Rate is a Sample (S) type per base-knowledge.md §3, so start == end (an instant reading) is the expected shape; value key is `heart_rate.bpm` (GoogleDataType.heartRate.filterName == \"heart_rate\").",
+  "point": [
+    {
+      "dataPointId": "hr-0001",
+      "startTime": "2026-07-01T07:30:00Z",
+      "endTime": "2026-07-01T07:30:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "heart_rate.bpm": 58
+      }
+    },
+    {
+      "dataPointId": "hr-0002",
+      "startTime": "2026-07-01T07:31:00Z",
+      "endTime": "2026-07-01T07:31:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "heart_rate.bpm": 61
+      }
+    }
+  ],
+  "nextPageToken": null
+}

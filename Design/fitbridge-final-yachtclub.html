@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FitBridge — Today (Yacht club)</title>
+<style>
+  :root{
+    /* Yacht club — final palette */
+    --canvas:#F2F0EF; --surface:#FFFFFF;
+    --ink:#245F73;         /* deep teal — primary text, headings */
+    --secondary:#5C7C87;   /* muted teal-gray — secondary text */
+    --tertiary:#96AEB5;    /* light teal-gray — placeholders */
+    --border:#E3E0DC;      /* soft warm hairline */
+    --gray:#BBBDBC;        /* structural divider / disabled (exact palette value) */
+    --accent:#733E24;      /* rust — the one functional color */
+    --accentTint:#EDE1DA;  /* light rust wash — coach panel bg */
+    --accentDeep:#5A2F1B;  /* darker rust — icons/labels on tint */
+    --radius:4px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{
+    min-height:100vh; display:grid; place-items:center; background:#2b2b2b;
+    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+    padding:32px 12px; color:var(--ink); -webkit-font-smoothing:antialiased;
+  }
+  .stage{display:flex; flex-direction:column; align-items:center; gap:16px;}
+  .caption{color:#8a8a82; font-size:12px; letter-spacing:.06em;}
+
+  .phone{
+    width:390px; height:844px; background:var(--canvas);
+    border-radius:46px; position:relative; overflow:hidden;
+    box-shadow:0 0 0 11px #111, 0 0 0 13px #2c2c2c, 0 30px 70px rgba(0,0,0,.55);
+  }
+  .notch{position:absolute; top:11px; left:50%; transform:translateX(-50%);
+    width:120px; height:30px; background:#111; border-radius:16px; z-index:40;}
+  .statusbar{position:absolute; top:0; left:0; right:0; height:52px; z-index:30;
+    display:flex; align-items:flex-end; justify-content:space-between;
+    padding:0 26px 6px; font-weight:600; font-size:13px; color:var(--ink);}
+  .statusbar .icons{display:flex; gap:6px; align-items:center;}
+
+  .screen{position:absolute; inset:0; padding-top:52px; padding-bottom:84px;
+    overflow-y:auto; scrollbar-width:none;}
+  .screen::-webkit-scrollbar{display:none;}
+  .pad{padding:8px 22px 24px;}
+
+  /* header */
+  .brandrow{display:flex; align-items:center; justify-content:space-between; padding:12px 0 16px;}
+  .brand{display:flex; align-items:center; gap:8px; font-size:16px; font-weight:500; color:var(--ink);}
+  .brand .dot{width:6px; height:6px; background:var(--accent);}
+  .sync{display:flex; align-items:center; gap:7px; font-size:11.5px; color:var(--secondary); font-weight:400;}
+  .sync .live{width:6px; height:6px; border-radius:50%; background:var(--accent);}
+
+  .greet{font-size:19px; font-weight:500; color:var(--ink); letter-spacing:-.01em;}
+  .date{font-size:12px; color:var(--tertiary); margin-top:3px; font-weight:400;}
+  .rule{height:1px; background:var(--gray); margin:16px 0 0; border:0;}
+
+  /* hero instrument */
+  .label{font-size:11px; color:var(--secondary); font-weight:500; letter-spacing:.04em;}
+  .hero{margin-top:20px;}
+  .hwrap{display:flex; align-items:flex-end; justify-content:space-between; margin-top:8px; gap:18px;}
+  .num{font-size:60px; font-weight:300; line-height:.9; color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:-.02em;}
+  .num small{font-size:18px; font-weight:400; color:var(--tertiary); letter-spacing:0; margin-left:2px;}
+  .meter{flex:1; display:flex; flex-direction:column; align-items:flex-end; gap:8px;}
+  .scale{display:flex; align-items:flex-end; gap:3px; height:24px;}
+  .scale .t{width:1.5px; height:13px; background:var(--gray);}
+  .scale .t.on{background:var(--accent);}
+  .scale .t.cur{width:2px; height:24px; background:var(--ink);}
+  .cap{font-size:12px; color:var(--secondary); font-weight:400;}
+  .cap b{color:var(--ink); font-weight:600;}
+
+  .rule2{height:1px; background:var(--border); margin:22px 0 0; border:0;}
+
+  /* section header */
+  .sec-h{display:flex; align-items:baseline; justify-content:space-between; margin:22px 0 12px;}
+  .sec-h .lbl{font-size:11px; color:var(--secondary); font-weight:500; letter-spacing:.06em; text-transform:uppercase;}
+  .edit{font-size:12px; color:var(--accentDeep); font-weight:400; background:none; border:0; cursor:pointer;
+    padding:2px 0; border-bottom:1px solid transparent; transition:.15s;}
+  .edit:hover{border-bottom-color:var(--accentDeep);}
+  .edit.on{color:var(--accent); border-bottom-color:var(--accent);}
+
+  /* instrument panel */
+  .panel{background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden;}
+  .row{display:flex; align-items:center; justify-content:space-between; padding:14px 16px; position:relative;}
+  .row + .row{border-top:1px solid var(--border);}
+  .row.prio::before{content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--accent);}
+  .row .l{display:flex; flex-direction:column;}
+  .row .lname{font-size:14px; color:var(--ink); font-weight:500;}
+  .row .lsub{font-size:11px; color:var(--tertiary); margin-top:3px; font-weight:400;}
+  .row .r{font-size:21px; color:var(--ink); font-weight:400; font-variant-numeric:tabular-nums; letter-spacing:-.01em;}
+  .row .r u{font-size:12px; color:var(--tertiary); margin-left:3px; text-decoration:none;}
+  .row .prog{position:absolute; left:0; bottom:0; height:2px; background:var(--accent);}
+  .row .grip{display:none; color:var(--tertiary); font-size:16px; margin-left:14px;}
+  body.editing .row .grip{display:inline;}
+  body.editing .row .r{opacity:.35;}
+  body.editing .panel{box-shadow:0 0 0 1px var(--accent);}
+
+  /* coach — restrained rust-tint panel */
+  .coach{margin-top:14px; background:var(--accentTint); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px; display:flex; align-items:center; gap:14px; cursor:pointer;}
+  .coach .ctxt{flex:1;}
+  .coach .ce{font-size:11px; color:var(--accentDeep); font-weight:600; letter-spacing:.06em; text-transform:uppercase; margin-bottom:6px;}
+  .coach .ctext{font-size:13.5px; color:var(--ink); line-height:1.42; font-weight:400;}
+  .coach .ctext b{font-weight:600;}
+  .coach .go{flex:0 0 auto; color:var(--accentDeep);}
+
+  /* tab bar */
+  .tabbar{position:absolute; left:0; right:0; bottom:0; height:84px; z-index:30;
+    background:var(--surface); border-top:1px solid var(--gray);
+    display:flex; justify-content:space-around; align-items:flex-start; padding-top:14px;}
+  .tab{display:flex; flex-direction:column; align-items:center; gap:7px; cursor:pointer;
+    color:var(--tertiary); font-size:10px; font-weight:500; letter-spacing:.02em;
+    transition:.15s; background:none; border:0;}
+  .tab.active{color:var(--ink);}
+  .home-ind{position:absolute; bottom:8px; left:50%; transform:translateX(-50%);
+    width:134px; height:5px; background:var(--ink); border-radius:99px; opacity:.8; z-index:31;}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="statusbar">
+      <span>9:41</span>
+      <span class="icons">
+        <svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="7" width="3" height="5" rx="1" fill="currentColor"/><rect x="4.5" y="5" width="3" height="7" rx="1" fill="currentColor"/><rect x="9" y="2.5" width="3" height="9.5" rx="1" fill="currentColor"/><rect x="13.5" y="0" width="3" height="12" rx="1" fill="currentColor"/></svg>
+        <svg width="24" height="12" viewBox="0 0 24 12"><rect x="1" y="1" width="20" height="10" rx="3" fill="none" stroke="currentColor" stroke-opacity=".5"/><rect x="3" y="3" width="15" height="6" rx="1.5" fill="currentColor"/><rect x="22" y="4" width="1.6" height="4" rx="1" fill="currentColor" fill-opacity=".5"/></svg>
+      </span>
+    </div>
+
+    <div class="screen">
+      <div class="pad">
+
+        <div class="brandrow">
+          <div class="brand"><span class="dot"></span> fitbridge</div>
+          <div class="sync"><span class="live"></span> Fitbit Air · synced 9m ago</div>
+        </div>
+
+        <div class="greet">Good morning, Sam</div>
+        <div class="date">Tuesday 27 June</div>
+        <hr class="rule">
+
+        <div class="hero">
+          <div class="label">Readiness</div>
+          <div class="hwrap">
+            <div class="num">82<small>/100</small></div>
+            <div class="meter">
+              <div class="scale" id="scale"></div>
+              <div class="cap"><b>+6</b> vs 30-day average</div>
+            </div>
+          </div>
+        </div>
+        <hr class="rule2">
+
+        <div class="sec-h">
+          <span class="lbl">Today</span>
+          <button class="edit" id="editBtn">Edit</button>
+        </div>
+
+        <div class="panel">
+          <div class="row prio">
+            <div class="l"><span class="lname">Heart</span><span class="lsub">Resting · steady</span></div>
+            <div style="display:flex;align-items:center;">
+              <span class="r">62<u>bpm</u></span><span class="grip">≡</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="l"><span class="lname">Steps</span><span class="lsub">68% of 12,000 goal</span></div>
+            <div style="display:flex;align-items:center;">
+              <span class="r">8,240</span><span class="grip">≡</span>
+            </div>
+            <span class="prog" style="width:68%;"></span>
+          </div>
+          <div class="row">
+            <div class="l"><span class="lname">Sleep</span><span class="lsub">Score 89 · deep 1h 24</span></div>
+            <div style="display:flex;align-items:center;">
+              <span class="r">7h 12m</span><span class="grip">≡</span>
+            </div>
+          </div>
+          <div class="row">
+            <div class="l"><span class="lname">Blood oxygen</span><span class="lsub">Average overnight</span></div>
+            <div style="display:flex;align-items:center;">
+              <span class="r">97<u>%</u></span><span class="grip">≡</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="coach">
+          <div class="ctxt">
+            <div class="ce">Coach</div>
+            <div class="ctext">Resting heart rate is down <b>4 bpm</b> this week — recovery is trending up. Want an easy aerobic day?</div>
+          </div>
+          <span class="go"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 8h9M8 4l4.5 4L8 12" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="tabbar">
+      <button class="tab active">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2.5" y="2.5" width="15" height="15" rx="1"/><line x1="2.5" y1="8" x2="17.5" y2="8"/></svg>
+        Today
+      </button>
+      <button class="tab">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="10" r="7.5"/><circle cx="10" cy="10" r="2"/></svg>
+        Coach
+      </button>
+      <button class="tab">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10" cy="6.5" r="3.2"/><path d="M3.5 17c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/></svg>
+        You
+      </button>
+      <button class="tab">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><line x1="3" y1="6" x2="17" y2="6"/><circle cx="13" cy="6" r="2" fill="var(--surface)"/><line x1="3" y1="14" x2="17" y2="14"/><circle cx="7" cy="14" r="2" fill="var(--surface)"/></svg>
+        Settings
+      </button>
+    </div>
+    <div class="home-ind"></div>
+  </div>
+
+  <div class="caption">FitBridge · Today · Yacht club (final)</div>
+</div>
+
+<script>
+  (function(){
+    const N=28, value=0.82, el=document.getElementById('scale'), cur=Math.round((N-1)*value);
+    for(let i=0;i<N;i++){const t=document.createElement('span');t.className='t';
+      if(i===cur)t.classList.add('cur');else if(i<cur)t.classList.add('on');el.appendChild(t);}
+  })();
+  const b=document.getElementById('editBtn');
+  b.addEventListener('click',()=>{
+    document.body.classList.toggle('editing');
+    b.classList.toggle('on');
+    b.textContent=document.body.classList.contains('editing')?'Done':'Edit';
+  });
+  document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+  }));
+</script>
+</body>
+</html>

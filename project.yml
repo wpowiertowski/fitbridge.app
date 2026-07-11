@@ -1,0 +1,167 @@
+name: FitBridge
+
+options:
+  minimumXcodeGenVersion: "2.38.0"
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "26.0"
+
+configs:
+  Debug: debug
+  Release: release
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1" # iPhone only for P0; iPad support is a later decision
+
+# Local Swift packages (architecture.md §2 module map).
+packages:
+  CoreModel:
+    path: Packages/CoreModel
+  Secrets:
+    path: Packages/Secrets
+  GoogleHealthClient:
+    path: Packages/GoogleHealthClient
+  SyncKit:
+    path: Packages/SyncKit
+  CoachKit:
+    path: Packages/CoachKit
+
+targets:
+  FitBridge:
+    type: application
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: FitBridgeApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.fitbridge.app
+        PRODUCT_NAME: FitBridge
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_CFBundleDisplayName: FitBridge
+        ENABLE_PREVIEWS: YES
+    info:
+      path: FitBridgeApp/Info.plist
+      properties:
+        CFBundleDisplayName: FitBridge
+        LSRequiresIPhoneOS: true
+        UIRequiredDeviceCapabilities: [armv7]
+        # HealthKit usage strings: specific and honest, per WP-01 step 4 -- App
+        # Review reads these verbatim.
+        NSHealthShareUsageDescription: >-
+          FitBridge reads your Apple Health workouts, heart rate, and sleep
+          data so it can avoid creating duplicate entries when it imports the
+          same activity from your Fitbit, and so your on-device AI coach can
+          reference your recent activity, sleep, and vitals to give you
+          personalized guidance.
+        NSHealthUpdateUsageDescription: >-
+          FitBridge writes your steps, heart rate, sleep, and weight data
+          from your Fitbit (synced via the Google Health API) into Apple
+          Health, so all your health data lives in one place.
+        # Background modes + the one BGTaskScheduler identifier this app
+        # registers (WP-01 step 4 / WP-16 registers the handler). `fetch` is
+        # paired with the BGAppRefreshTask WP-16 registers; `processing` is
+        # kept for the optional BGProcessingTask backfill path (WP-15/§4.16).
+        UIBackgroundModes:
+          - fetch
+          - processing
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.fitbridge.sync.refresh
+        # OAuth redirect URL scheme (WP-04's ASWebAuthenticationSession
+        # redirect target). Placeholder scheme derived from the bundle ID;
+        # this MUST be reconciled with the reversed iOS-client-ID scheme
+        # Google issues once the real OAuth client is created (P-1.3) --
+        # tracked as a deviation in progress.md.
+        CFBundleURLTypes:
+          - CFBundleTypeRole: Editor
+            CFBundleURLName: com.fitbridge.app.oauth
+            CFBundleURLSchemes:
+              - com.fitbridge.app
+    entitlements:
+      path: FitBridgeApp/FitBridge.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+    dependencies:
+      - package: CoreModel
+      - package: Secrets
+      - package: GoogleHealthClient
+      - package: SyncKit
+      - package: CoachKit
+
+  FitBridgeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: FitBridgeTests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    # WP-17: this target previously had no `dependencies:` entry -- harmless
+    # while every test in it was a self-contained placeholder (WP-01), but
+    # this WP's first real `@testable import FitBridge` unit test
+    # (`SyncPreferencesTests.swift`) exposed that xcodegen's inferred
+    # TEST_HOST/BUNDLE_LOADER wiring (present without this) is enough for
+    # Xcode to *host* the test bundle inside the app, but not enough for the
+    # linker to actually resolve `FitBridge`'s (or its packages') symbols --
+    # confirmed by a real `xcodebuild test` run failing with "Undefined
+    # symbol" for every `FitBridge`/`CoreModel` symbol the new test
+    # references, plus an explicit compiler warning naming the missing
+    # dependency. Adding the target dependency (xcodegen's standard recipe
+    # for a hosted unit test target) fixes it -- FitBridge's own transitive
+    # package links (CoreModel, Secrets, GoogleHealthClient, SyncKit,
+    # CoachKit) come along with it, so no per-package entry is needed here.
+    dependencies:
+      - target: FitBridge
+
+  # WP-10: XCUITest target for the onboarding happy-path + dashboard
+  # per-type-states tests (implementation-plan.md WP-10's "Tests" line).
+  # Launches FitBridge as a separate process (per Apple's ui-testing bundle
+  # convention) rather than hosting it, so it depends on -- but doesn't
+  # link against -- the app target.
+  FitBridgeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: FitBridgeUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        # XCTestCase's own lifecycle methods (setUpWithError, its
+        # initializers, ...) are nonisolated in the XCTest framework; the
+        # project-wide `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor` (this
+        # file's top-level `settings.base`) would make every override here
+        # implicitly MainActor-isolated and fail to match, so this target
+        # opts back out to nonisolated-by-default, matching XCTest's own
+        # convention (individual test methods opt into `@MainActor` where
+        # they touch `XCUIApplication`/UI state instead).
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    dependencies:
+      - target: FitBridge
+
+schemes:
+  FitBridge:
+    build:
+      targets:
+        FitBridge: all
+        FitBridgeTests: [test]
+        FitBridgeUITests: [test]
+    test:
+      config: Debug
+      targets:
+        - FitBridgeTests
+        - FitBridgeUITests
+    run:
+      config: Debug

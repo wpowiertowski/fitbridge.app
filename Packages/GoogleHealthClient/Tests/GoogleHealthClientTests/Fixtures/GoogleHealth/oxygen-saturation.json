@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Oxygen Saturation is a Sample (S) type per base-knowledge.md §3; value key `oxygen_saturation.percentage` (field name assumed). base-knowledge.md doesn't pin down whether Google's wire payload is already a 0...1 fraction or a 0...100 percentage; this fixture assumes a consumer-facing percentage (97, meaning 97%) since every SpO2 reading either platform shows a user is displayed that way -- SyncKit's TypeMapper converts 0...100 -> 0...1 explicitly (HealthKit's oxygenSaturation identifier requires a 0...1 fraction, base-knowledge.md §5). Mirrored in SyncKit's TypeMapperFixtures.oxygenSaturationPoint().",
+  "point": [
+    {
+      "dataPointId": "spo2-0001",
+      "startTime": "2026-07-09T02:00:00Z",
+      "endTime": "2026-07-09T02:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "oxygen_saturation.percentage": 97
+      }
+    }
+  ],
+  "nextPageToken": null
+}

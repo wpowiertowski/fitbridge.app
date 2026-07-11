@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+
+# Cancel in-progress runs for the same PR/branch -- prevents queuing multiple
+# expensive macOS builds when commits are pushed rapidly (matches the
+# convention in the sibling lumivault.app project).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+# Pin the Xcode version so CI matches local dev (Xcode 26.4.1, confirmed
+# during this repo's initial build-out). To find which versions are
+# available on the runner, see
+# https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
+env:
+  XCODE_VERSION: "26.4.1"
+
+jobs:
+  packages:
+    name: swift test (${{ matrix.package }})
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [CoreModel, Secrets, GoogleHealthClient, SyncKit, CoachKit]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Cache SwiftPM and SourcePackages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+            Packages/${{ matrix.package }}/.build
+          key: ${{ runner.os }}-swiftpm-${{ matrix.package }}-${{ hashFiles(format('Packages/{0}/Package.resolved', matrix.package)) }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-${{ matrix.package }}-
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: swift test
+        working-directory: Packages/${{ matrix.package }}
+        # Warnings fail the build: CI must go red on warnings.
+        run: swift test -Xswiftc -warnings-as-errors
+
+  app:
+    name: xcodebuild build test (FitBridge scheme)
+    runs-on: macos-26
+    needs: packages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Cache SwiftPM and SourcePackages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.swiftpm
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/Developer/Xcode/DerivedData/*/SourcePackages
+          key: ${{ runner.os }}-swiftpm-app-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-swiftpm-app-
+
+      - name: Select Xcode ${{ env.XCODE_VERSION }}
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Generate Xcode project (xcodegen)
+        run: |
+          set -euo pipefail
+          # xcodegen ships via Homebrew on GitHub's macOS runners; project.yml
+          # is the committed source of truth, the .xcodeproj itself is not
+          # committed here (unlike lumivault.app, which commits its .xcodeproj
+          # directly -- FitBridge deliberately regenerates it in CI instead,
+          # to avoid .pbxproj merge conflicts across parallel work streams).
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Select an available iOS Simulator runtime
+        id: sim
+        run: |
+          set -euo pipefail
+          # Pick any available iPhone simulator; whichever iOS runtime the
+          # runner's Xcode ships is fine as long as it satisfies the app's
+          # deploymentTarget (26.0).
+          udid=$(xcrun simctl list devices available \
+            | grep -E 'iPhone' \
+            | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
+            | head -n1)
+          if [ -z "$udid" ]; then
+            echo "::error::No available iPhone simulator found on this runner." >&2
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Build + test FitBridge scheme
+        run: |
+          set -euo pipefail
+          dest="platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"
+          xcodebuild build test \
+            -project FitBridge.xcodeproj \
+            -scheme FitBridge \
+            -destination "$dest" \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
+            GCC_TREAT_WARNINGS_AS_ERRORS=YES

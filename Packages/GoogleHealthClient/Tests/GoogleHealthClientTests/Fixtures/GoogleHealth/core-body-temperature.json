@@ -1,0 +1,19 @@
+{
+  "_comment": "Hand-derived (implementation-plan.md fixtures rule, WP-11), same envelope assumption as steps.json (see its _comment). Core Body Temperature is a Sample (S) type per base-knowledge.md §3; value key `core_body_temperature.celsius` (field name assumed; Celsius chosen to match HealthKit's own degreeCelsius unit, avoiding an unconfirmed Fahrenheit conversion). Mirrored in SyncKit's TypeMapperFixtures.coreBodyTemperaturePoint().",
+  "point": [
+    {
+      "dataPointId": "cbt-0001",
+      "startTime": "2026-07-09T03:00:00Z",
+      "endTime": "2026-07-09T03:00:00Z",
+      "dataSource": {
+        "platform": "IOS",
+        "device": { "displayName": "Fitbit Air" },
+        "recordingMethod": "AUTOMATICALLY_RECORDED"
+      },
+      "value": {
+        "core_body_temperature.celsius": 37.1
+      }
+    }
+  ],
+  "nextPageToken": null
+}

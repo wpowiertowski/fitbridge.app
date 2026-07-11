@@ -1,0 +1,106 @@
+// HealthKitPermissionView.swift
+//
+// WP-10 (implementation-plan.md): onboarding step 2 of 4 -- calls
+// `HealthKitAuth.requestWrite(for:)` for the P0 types (steps, heart rate,
+// weight, sleep) and handles both the HK-unavailable state (architecture.md
+// §6: "HealthKit write denied" row's sibling case, `isHealthDataAvailable()
+// == false`, e.g. an iPad) and generic request failures.
+//
+// Real API discovered here (progress.md's WP-06 entry, `HealthKitAuth
+// .swift`): `requestWrite(for:)` throws typed `HealthKitAuthError` and
+// never reports *per-type* denial itself -- HealthKit resolves the
+// completion handler once the system sheet is dismissed regardless of which
+// individual toggles the user left on/off. Per-type write denial is only
+// ever visible later via `writeStatus(for:)`, which is exactly what the
+// WP-10 dashboard's status badges read (`SyncTypeRow.swift`) -- this screen
+// itself does not attempt to detect single-type denial.
+
+import CoreModel
+import SwiftUI
+import SyncKit
+
+struct HealthKitPermissionView: View {
+    @Environment(AppEnvironment.self) private var appEnvironment
+    var onUnavailable: () -> Void
+    var onGranted: () -> Void
+
+    @State private var isRequesting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "heart.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(.red)
+            Text("Connect Apple Health")
+                .font(.title.bold())
+            Text("FitBridge needs permission to write your steps, heart rate, weight, and sleep data to Apple Health.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .accessibilityIdentifier("onboarding.healthkit.error")
+            }
+            Spacer()
+            Button {
+                requestAccess()
+            } label: {
+                if isRequesting {
+                    ProgressView()
+                } else {
+                    Text("Allow Access")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isRequesting)
+            .accessibilityIdentifier("onboarding.healthkit.allow")
+            Spacer().frame(height: 16)
+        }
+        .padding()
+        // No container-level identifier -- see WelcomeView.swift's note:
+        // it would override the more specific `onboarding.healthkit.allow`/
+        // `.error` identifiers set on the children below.
+        .task {
+            // Gate up front (WP-06's `isAvailable`, `HKHealthStore
+            // .isHealthDataAvailable()`) so a device that can never grant
+            // HealthKit access (e.g. an iPad model without Health support)
+            // skips straight to the dedicated unavailable screen instead of
+            // showing an "Allow Access" button that can only fail.
+            if !appEnvironment.healthKitAuth.isAvailable {
+                onUnavailable()
+            }
+        }
+    }
+
+    private func requestAccess() {
+        guard appEnvironment.healthKitAuth.isAvailable else {
+            onUnavailable()
+            return
+        }
+        isRequesting = true
+        errorMessage = nil
+        Task {
+            do {
+                try await appEnvironment.healthKitAuth.requestWrite(for: AppEnvironment.p0Types)
+                isRequesting = false
+                onGranted()
+            } catch {
+                isRequesting = false
+                errorMessage = String(describing: error)
+            }
+        }
+    }
+}
+
+#Preview {
+    HealthKitPermissionView(onUnavailable: {}, onGranted: {})
+        .environment(AppEnvironment())
+}
