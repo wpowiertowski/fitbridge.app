@@ -25,21 +25,21 @@ Companion docs:
 ## 1. System context
 
 ```
-┌────────────┐  BLE   ┌──────────────────┐  ~15 min   ┌─────────────────────┐
-│ Fitbit Air │ ─────▶ │ Google Health app │ ─────────▶ │ Google Health API    │
-│ Pixel Watch│        │ (user's phone)    │   sync     │ health.googleapis…/v4│
-└────────────┘        └──────────────────┘            └──────────┬──────────┘
-                                                                 │ OAuth 2.0 + PKCE, reconcile reads
-                                                                 ▼
-                                                    ┌───────────────────────────┐
-                                                    │  HealthLoom (this app)     │
-                                                    │  SyncEngine → TypeMapper  │
-                                                    │  → ConflictResolver       │
-                                                    │  → HealthKitWriter        │
-                                                    └───────┬──────────┬────────┘
-                                                            ▼          ▼
-                    Apple Watch ── native recording ──▶ Apple HealthKit   AI Coach
-                    (workouts: GPS, dense HR)        (writable types)  (profile-only context)
+┌─────────────┐  BLE   ┌───────────────────┐  ~15 min   ┌───────────────────────┐
+│ Fitbit Air  │ ─────▶ │ Google Health app │ ─────────▶ │ Google Health API     │
+│ Pixel Watch │        │ (user's phone)    │    sync    │ health.googleapis…/v4 │
+└─────────────┘        └───────────────────┘            └───────────┬───────────┘
+                                                                    │ OAuth 2.0 + PKCE, reconcile reads
+                                                                    ▼
+                                                    ┌───────────────────────────────┐
+                                                    │ HealthLoom (this app)         │
+                                                    │ SyncEngine → TypeMapper       │
+                                                    │ → ConflictResolver            │
+                                                    │ → HealthKitWriter             │
+                                                    └──┬──────────────────┬─────────┘
+                                                       ▼                  ▼
+                   Apple Watch ── native recording ──▶ Apple HealthKit    AI Coach
+                   (workouts: GPS, dense HR)           (writable types)   (profile-only context)
 ```
 
 Consequences of the upstream design:
