@@ -1,7 +1,7 @@
 [![Build](https://github.com/wpowiertowski/healthloom.app/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wpowiertowski/healthloom.app/actions?query=branch%3Amain)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Swift 6.0](https://img.shields.io/badge/swift-6.0-F05138.svg)](https://swift.org)
-[![iOS 26](https://img.shields.io/badge/iOS-26-000000.svg)](https://developer.apple.com/ios/)
+[![Swift 6.4](https://img.shields.io/badge/swift-6.4-F05138.svg)](https://swift.org)
+[![iOS 27](https://img.shields.io/badge/iOS-27-000000.svg)](https://developer.apple.com/ios/)
 [![SwiftUI](https://img.shields.io/badge/SwiftUI-blue.svg)](https://developer.apple.com/swiftui/)
 [![SwiftData](https://img.shields.io/badge/SwiftData-blue.svg)](https://developer.apple.com/swiftdata/)
 [![HealthKit](https://img.shields.io/badge/HealthKit-blue.svg)](https://developer.apple.com/healthkit/)
@@ -21,10 +21,12 @@ even if your wearable isn't from Apple. It's built for the dual-wear user: a Fit
 Watch worn for dedicated activities — HealthLoom consolidates the two instead of double
 counting.
 
-On top of that data, HealthLoom layers a **user-controlled AI coach**: on-device Apple
-Foundation Models by default, with Claude, OpenAI, and Gemini available as opt-in cloud
-providers. You write the system prompt; a non-editable safety suffix keeps clinical
-topics pointed at an actual clinician.
+On top of that data, HealthLoom layers a **user-controlled AI coach**, built entirely on
+the iOS 27 Foundation Models framework: the on-device Apple model by default, Apple's
+Private Cloud Compute server model as a free bigger-model tier, and Claude / Gemini as
+opt-in bring-your-own-key providers — all behind the framework's `LanguageModel`
+protocol, so one session API serves every tier. You write the system prompt; a
+non-editable safety suffix keeps clinical topics pointed at an actual clinician.
 
 ## Features
 
@@ -44,7 +46,7 @@ Architected, not yet built (see [Open Questions](#status--roadmap) below):
 
 - Apple Watch-priority conflict resolution during overlapping workouts (D13)
 - On-device AI coach (`CoachKit` is currently a placeholder package)
-- Cloud AI providers (Claude / OpenAI / Gemini), prompt editor, chat UI
+- Private Cloud Compute / Claude / Gemini model tiers, prompt editor, chat UI
 
 ## Technology Stack
 
@@ -56,9 +58,10 @@ Architected, not yet built (see [Open Questions](#status--roadmap) below):
 | Device sync source | Google Health API (`health.googleapis.com/v4`) via OAuth 2.0 + PKCE |
 | Secrets | Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`) |
 | Background work | BGTaskScheduler (`BGAppRefreshTask`) |
-| On-device AI | Apple Foundation Models (`LanguageModelSession`), planned |
-| Cloud AI | Claude / OpenAI / Gemini, provider-abstracted, opt-in, planned |
-| Concurrency | Swift 6.2 strict concurrency (actors, `async`/`await`, `@concurrent`) |
+| On-device AI | Foundation Models framework (`LanguageModelSession`, `SystemLanguageModel`), planned |
+| Apple cloud AI | `PrivateCloudComputeLanguageModel` — free server model on Private Cloud Compute (Small Business Program), planned |
+| BYO-key cloud AI | Claude via Anthropic's official `ClaudeForFoundationModels` package, Gemini via Firebase — both through the iOS 27 `LanguageModel` protocol, opt-in, planned |
+| Concurrency | Swift 6.4 strict concurrency (actors, `async`/`await`, `@concurrent`) |
 
 ## Architecture
 
@@ -130,8 +133,12 @@ xcodebuild test -project HealthLoom.xcodeproj \
 
 ## Requirements
 
-- iOS 26 or later
-- Xcode 26.4.1 or later (to build from source)
+- iOS 27 or later
+- Xcode 27 beta or later, on an Apple Silicon Mac (to build from source). Note: GitHub's
+  hosted macOS runners don't ship the Xcode 27 beta yet, so CI's package `swift test`
+  jobs run on Xcode 26.x (the manifests deliberately stay at `swift-tools-version: 6.2`)
+  and the app-scheme job auto-skips until the runner image adds it — see the Toolchain
+  note in [implementation-plan.md](implementation-plan.md)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) — `project.yml` is the source of truth; the `.xcodeproj` is not committed
 - A Google Cloud OAuth client for the Google Health API (see [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md))
 
@@ -143,8 +150,10 @@ order, per [implementation-plan.md](implementation-plan.md):
 
 - **WP-12b** — Apple Watch-priority conflict resolution (architecture.md D13)
 - **P2** — on-device AI coach (`KnowledgeStore`, `ReadinessEngine`, chat UI)
-- **P3** — cloud AI providers (Claude / OpenAI / Gemini) + key management
-- **P4** — product polish, notifications, export/deletion, accessibility & launch checklist
+- **P3** — off-device model tiers (Private Cloud Compute / Claude / Gemini), consent +
+  key management, coach evals on Apple's Evaluations framework
+- **P4** — product polish, notifications, export/deletion, Siri/Spotlight App Intents,
+  accessibility & launch checklist
 
 ## License
 

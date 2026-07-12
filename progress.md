@@ -2922,3 +2922,41 @@ been exercised against a real Google account end-to-end — every "Done when" th
 on that (WP-11's real-payload confirmations, WP-15/16/17's real-consent flows) is verified
 against fixtures/stubs only, a pre-existing, explicitly-tracked gap, not a new one. With
 that caveat, Phase P1 ("full sync") is functionally complete and ready for Phase P2.
+
+## WP-R1 · iOS 27 / Xcode 27 beta / Swift 6.4 retarget (post-WWDC26 platform review)
+
+Reviewed the WWDC 2026 releases (iOS 27, Xcode 27 beta, Swift 6.4) and retargeted the
+project and all planning docs at them, with the AI-capability review driving the largest
+changes. **What changed and why:** (1) architecture.md D9 rewritten — iOS 27's Foundation
+Models framework now ships a public `LanguageModel` protocol that any provider can back
+(`SystemLanguageModel`, the new `PrivateCloudComputeLanguageModel`, Anthropic's official
+`ClaudeForFoundationModels` package, Gemini via Firebase), which deletes the planned
+custom `CoachProvider` protocol, REST clients, and `SSEParser` from the design before any
+of them were built (CoachKit is still the WP-01 placeholder — nothing to migrate);
+(2) new D14 (model ladder: on-device → free Apple PCC server model [32K context,
+reasoning, per-user daily quota, Small Business Program + entitlement] → BYO-key
+Claude/Gemini) and D15 (mid-chat tier switching on Dynamic Profiles); (3) P3 of the
+implementation plan rebuilt around catalog/consent/orchestration glue instead of model
+clients — WP-28's OpenAI sub-item deferred pending an official `LanguageModel`
+conformance; new WP-31 adopts Apple's Evaluations framework for the test-plan §9 eval
+sets, new WP-32 is the Dynamic Profiles tier switcher, new optional WP-39 covers iOS 27
+App Intents (entity/intent schemas, View Annotations, App Intents Testing framework);
+(4) P-1 gains a second launch long pole: the PCC entitlement application; (5) smaller
+weaves: iOS 27 HealthKit heart-rate-zone read into WP-19/D6, SwiftData `HistoryObserver`
+as WP-19's refresh trigger, SwiftUI reorderable-content for WP-33, Swift 6.4's
+`withTaskCancellationShield`/async-`defer` in the concurrency model and WP-15/16, new §6
+edge rows (PCC quota, watchOS 27 rebuilt HR engine baseline shift, Health-app nutrition
+camera double-logging). **Toolchain reality check (deliberate deviation):** deployment
+targets bumped to iOS 27.0 (project.yml + all five package manifests), but manifests
+deliberately stay at `swift-tools-version: 6.2` and packages keep `.macOS("26.0")`
+because GitHub's macos-26 runner image ships no Xcode 27 beta yet
+(actions/runner-images#14196) — this keeps all five `swift test` CI jobs green (they
+build for the macOS host), while the app-scheme job now detects Xcode 27 on the runner
+and skips with a `::warning` until the image ships it. Un-guarding CI and bumping
+manifests to 6.4 is tracked in WP-38's new toolchain-finalization checklist item.
+**Deliberately deferred:** any code adoption of iOS-27-only APIs (nothing in the shipped
+P0/P1 pipeline needs them; CoachKit will consume Foundation Models iOS 27 surface
+directly in P2/P3); multimodal image input for the coach (architecture §7.5, v1 stays
+text-only). **Surprise worth recording:** Apple's own AI health coach (Project Mulberry)
+slipped past WWDC 26 — the market positioning for a user-controlled, multi-tier coach on
+consolidated dual-device data is stronger than when the architecture was first written.

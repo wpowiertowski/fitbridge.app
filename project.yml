@@ -3,8 +3,11 @@ name: HealthLoom
 options:
   minimumXcodeGenVersion: "2.38.0"
   createIntermediateGroups: true
+  # iOS 27 retarget (2026-07): building the app scheme requires the Xcode 27
+  # beta's iOS 27 SDK. Package `swift test` runs are unaffected (they build
+  # for the macOS host). See implementation-plan.md "Toolchain note".
   deploymentTarget:
-    iOS: "26.0"
+    iOS: "27.0"
 
 configs:
   Debug: debug
@@ -40,7 +43,7 @@ targets:
   HealthLoom:
     type: application
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: HealthLoomApp
     settings:
@@ -102,7 +105,7 @@ targets:
   HealthLoomTests:
     type: bundle.unit-test
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: HealthLoomTests
     settings:
@@ -133,7 +136,7 @@ targets:
   HealthLoomUITests:
     type: bundle.ui-testing
     platform: iOS
-    deploymentTarget: "26.0"
+    deploymentTarget: "27.0"
     sources:
       - path: HealthLoomUITests
     settings:
