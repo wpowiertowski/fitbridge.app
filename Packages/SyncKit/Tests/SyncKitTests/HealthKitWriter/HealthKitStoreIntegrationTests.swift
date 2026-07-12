@@ -19,7 +19,7 @@
 // repo's macOS test host reports `HKHealthStore.isHealthDataAvailable() ==
 // false`, exactly as WP-06/WP-07 both already found) and is flagged as a
 // required follow-up in progress.md's WP-08 entry: re-run on a real device or
-// simulator where FitBridge has already been launched once and the user
+// simulator where HealthLoom has already been launched once and the user
 // granted write access to steps (and ideally heart rate/weight/sleep) via the
 // real onboarding flow (WP-10).
 
@@ -83,7 +83,7 @@ struct HealthKitStoreIntegrationTests {
             quantity: HKQuantity(unit: .count(), doubleValue: 42),
             start: start,
             end: end,
-            metadata: [HKMetadataKeyExternalUUID: externalID, "fitbridge.externalID": externalID]
+            metadata: [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
         )
         let window = (start: start.addingTimeInterval(-60), end: end.addingTimeInterval(60))
 

@@ -27,7 +27,7 @@ public enum CoreModel {
     ///
     /// - Parameter inMemory: `true` for tests/previews — nothing touches disk, no file
     ///   protection to apply. `false` opens (creating if needed) the on-disk store
-    ///   under Application Support/FitBridge, with `NSFileProtectionComplete` applied
+    ///   under Application Support/HealthLoom, with `NSFileProtectionComplete` applied
     ///   to the store file (architecture.md D11 — the store holds `LocalSample`
     ///   clinical events and chat history, nothing more sensitive belongs in it per D2).
     public static func makeContainer(inMemory: Bool) throws -> ModelContainer {
@@ -60,7 +60,7 @@ public enum CoreModel {
             appropriateFor: nil,
             create: true
         )
-        let directory = base.appending(path: "FitBridge", directoryHint: .isDirectory)
+        let directory = base.appending(path: "HealthLoom", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "CoreModel.store", directoryHint: .notDirectory)
     }

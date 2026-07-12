@@ -4,12 +4,12 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.fitbridge.sync.refresh</string>
+		<string>com.healthloom.sync.refresh</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>FitBridge</string>
+	<string>HealthLoom</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -28,10 +28,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.fitbridge.app.oauth</string>
+			<string>com.healthloom.app.oauth</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.fitbridge.app</string>
+				<string>com.healthloom.app</string>
 			</array>
 		</dict>
 	</array>
@@ -40,9 +40,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSHealthShareUsageDescription</key>
-	<string>FitBridge reads your Apple Health workouts, heart rate, and sleep data so it can avoid creating duplicate entries when it imports the same activity from your Fitbit, and so your on-device AI coach can reference your recent activity, sleep, and vitals to give you personalized guidance.</string>
+	<string>HealthLoom reads your Apple Health workouts, heart rate, and sleep data so it can avoid creating duplicate entries when it imports the same activity from your Fitbit, and so your on-device AI coach can reference your recent activity, sleep, and vitals to give you personalized guidance.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>FitBridge writes your steps, heart rate, sleep, and weight data from your Fitbit (synced via the Google Health API) into Apple Health, so all your health data lives in one place.</string>
+	<string>HealthLoom writes your steps, heart rate, sleep, and weight data from your Fitbit (synced via the Google Health API) into Apple Health, so all your health data lives in one place.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

@@ -13,13 +13,13 @@ the exact `swiftSettings` block from the plan (`.defaultIsolation(MainActor.self
 library and test target, wired per architecture.md §2
 (GoogleHealthClient → CoreModel+Secrets; SyncKit → CoreModel+Secrets+GoogleHealthClient;
 CoachKit → CoreModel+Secrets), each with one placeholder source file and one
-passing Swift Testing test; the app target `FitBridge` (bundle id
-`com.fitbridge.app`, iOS 26.0 deployment target) generated via `xcodegen`
+passing Swift Testing test; the app target `HealthLoom` (bundle id
+`com.healthloom.app`, iOS 26.0 deployment target) generated via `xcodegen`
 (present at `/opt/homebrew/bin/xcodegen`, v2.45.4; `tuist` not installed) from
 a hand-written `project.yml` implementing WP-01 step 4: HealthKit entitlement,
 honest/specific `NSHealthShareUsageDescription` / `NSHealthUpdateUsageDescription`
 strings, `UIBackgroundModes: [processing]`, `BGTaskSchedulerPermittedIdentifiers:
-[com.fitbridge.sync.refresh]`, and a `CFBundleURLTypes` OAuth redirect scheme;
+[com.healthloom.sync.refresh]`, and a `CFBundleURLTypes` OAuth redirect scheme;
 plus `.github/workflows/ci.yml` (macOS runner, per-package `swift test
 -Xswiftc -warnings-as-errors` matrix job with SPM caching, then an app job
 that runs `xcodegen generate` + `xcodebuild build test` on a real iOS
@@ -27,7 +27,7 @@ simulator, `SWIFT_TREAT_WARNINGS_AS_ERRORS=YES`); and moved the two design
 mockups into `Design/` via `git mv`, fixing the now-relative links in
 architecture.md's companion-docs list. **Verification performed in this
 session** (not just written): `swift test` passes with zero warnings in all
-five packages, and `xcodebuild build test -scheme FitBridge` passes on a real
+five packages, and `xcodebuild build test -scheme HealthLoom` passes on a real
 iOS 26.4.1 simulator (toolchain found: Xcode 26.4.1 / Build 17E202, Swift
 driver 6.3.1 (swiftlang-6.3.1.1.2), macOS 26.5.1 host). **Deliberate
 deferrals:** no real model/keychain/networking code — every package ships
@@ -45,7 +45,7 @@ deliberately **not** committed (`.gitignore` excludes it) — `project.yml` is
 the source of truth and CI regenerates it via `xcodegen generate`; this is
 standard xcodegen practice and avoids pbxproj merge conflicts, but it's a
 choice beyond what WP-01's text states outright. (4) The OAuth redirect URL
-scheme (`com.fitbridge.app` / `CFBundleURLName: com.fitbridge.app.oauth`) is a
+scheme (`com.healthloom.app` / `CFBundleURLName: com.healthloom.app.oauth`) is a
 **placeholder** — no real Google iOS OAuth client exists yet (that's P-1.3, a
 human prerequisite). WP-04 must reconcile this with whatever redirect URI the
 real Google Cloud OAuth client actually issues (commonly the reversed client
@@ -64,7 +64,7 @@ actual hosted-runner image/label for Xcode 26 was not verified against a live
 GitHub Actions environment in this session (no network access to
 github.com from here); whoever first runs this CI should confirm/adjust the
 runner label and Xcode version pin. **Human follow-up still required per the
-plan:** opening `FitBridge.xcodeproj` in Xcode at least once to eyeball
+plan:** opening `HealthLoom.xcodeproj` in Xcode at least once to eyeball
 signing/team settings before running on a physical device — not needed for
 simulator builds, which already pass headlessly.
 
@@ -99,7 +99,7 @@ lock-protected in-memory fake in the test target. A second suite,
 `KeychainSecurityBackendTests.swift`, is the one integration-style test that
 attempts the **real** Keychain end-to-end (same round-trip, via
 `KeychainSecurityBackend` pointed at a throwaway
-`"com.fitbridge.secrets.integration-test"` service so it can never touch a
+`"com.healthloom.secrets.integration-test"` service so it can never touch a
 real secret); it gates itself with a `.enabled(if:)` trait backed by a
 probe (`isRealKeychainUsable()`) that attempts a real add+delete first. **On
 this Mac, the probe fails and the test skips itself** with an explanatory
@@ -162,7 +162,7 @@ defaults to `isClinical`'s value unless explicitly overridden — D8 — with an
 opt-in test). `CoreModel.makeContainer(inMemory:)` builds the schema from a single
 `CoreModel.modelTypes` array (so the container and the "round-trips every model" test
 can't drift); the production path opens the store under
-`Application Support/FitBridge/CoreModel.store` and applies `NSFileProtectionComplete`
+`Application Support/HealthLoom/CoreModel.store` and applies `NSFileProtectionComplete`
 via `FileProtectionType.complete`, guarded `#if os(iOS)` since Data Protection classes
 are meaningless on the macOS host this package's tests actually run on (noted in a doc
 comment, per the WP-02 spec's own anticipation of this). All required tests pass in
@@ -280,7 +280,7 @@ basename `GoogleHealthClient.swift` — the original WP-01 placeholder
 (`Sources/GoogleHealthClient/GoogleHealthClient.swift`) and a new WP-05 file
 (`Sources/GoogleHealthClient/DataClient/GoogleHealthClient.swift`) — which both plain
 `swift test` ("multiple producers... GoogleHealthClient.swift.o") and
-`xcodebuild build -scheme FitBridge -destination 'generic/platform=iOS Simulator'`
+`xcodebuild build -scheme HealthLoom -destination 'generic/platform=iOS Simulator'`
 ("Filename \"GoogleHealthClient.swift\" used twice") reject outright, since SyncKit's
 `Package.swift` depends on `GoogleHealthClient` per architecture.md §2 and I was not
 permitted to touch that package. Confirmed via `stat`/`git status` that this is a
@@ -310,7 +310,7 @@ in-repo `swift test`/`xcodebuild` runs per the handoff protocol's guidance to ve
 "another way" when a concurrent package's in-flight state blocks the normal path.
 **Once `GoogleHealthClient`'s duplicate-filename conflict is resolved (its own
 scope, not touched here), `swift test -Xswiftc -warnings-as-errors` in
-`Packages/SyncKit` and `xcodebuild build -scheme FitBridge -destination
+`Packages/SyncKit` and `xcodebuild build -scheme HealthLoom -destination
 'generic/platform=iOS Simulator'` should be re-run as the authoritative in-repo
 confirmation — nothing in this session's evidence suggests they'll fail, but they
 were not able to actually complete end-to-end.** Also confirmed as an aside:
@@ -361,7 +361,7 @@ CryptoKit SHA256 + base64url, verified against RFC 7636 Appendix B.1's own worke
 example verifier→challenge pair); `GoogleOAuthScope.urlString(for:access:)` mapping
 CoreModel's `GoogleDataType.Scope` families to the literal
 `https://www.googleapis.com/auth/googlehealth.{scope}.{readonly|writeonly}` URL
-(base-knowledge §2) — FitBridge only ever requests `.readonly`; `GoogleAuthConfig`
+(base-knowledge §2) — HealthLoom only ever requests `.readonly`; `GoogleAuthConfig`
 (client ID, redirect URI/scheme, the three Google endpoints, `additionalScopes`
 defaulting to `["openid","email"]` so the post-consent userinfo/`hd` call has
 something to authenticate with); `actor GoogleAuthManager` — `validAccessToken()`
@@ -485,7 +485,7 @@ smoke test in both WPs' "Done when" (consent against real Google on device; a re
 account's week of steps) requires the human-provisioned OAuth client (P-1.3) —
 skipped, as instructed, and still gated on that prerequisite; also still open is
 P-1.3 itself and reconciling `project.yml`'s placeholder OAuth redirect scheme
-(`com.fitbridge.app`, per WP-01's note) against whatever real reversed-client-ID
+(`com.healthloom.app`, per WP-01's note) against whatever real reversed-client-ID
 scheme Google issues once that client exists.
 
 ## WP-07 · TypeMapper v1 (steps, heart rate, sleep, weight)
@@ -520,9 +520,9 @@ types (steps/heartRate/weight/sleep); any *other* `.healthKit` row (distance, bo
 exercise, food, ...) also currently falls to `.skip` since this WP doesn't implement it yet —
 **flagged here as the scope note WP-11's implementer needs**: broaden `decideHealthKitMapped`'s
 switch, don't touch the routing shape. **Metadata (step 4):** every emitted sample carries
-`HKMetadataKeyExternalUUID = p.id`, `"fitbridge.externalID": p.id` (note `fitbridge.*`, not
+`HKMetadataKeyExternalUUID = p.id`, `"healthloom.externalID": p.id` (note `healthloom.*`, not
 `bridge.*` — matches the app's rename per architecture.md's naming section), and
-`"fitbridge.sourceDevice": p.source.deviceDisplayName` (carried through as `nil`, never
+`"healthloom.sourceDevice": p.source.deviceDisplayName` (carried through as `nil`, never
 coerced to `""`, when Google didn't report a device name — tested explicitly). **Sleep
 (step 3):** stage map `awake→.awake, light→.asleepCore, deep→.asleepDeep, rem→.asleepREM`,
 anything else (including a literal `"unknown"`) `→.asleepUnspecified`; segments are sorted by
@@ -720,7 +720,7 @@ expected, since `HKHealthStore.isHealthDataAvailable()` is `false` on this repo'
 host (WP-06/07 both already found this) and HealthKit authorization can only ever be
 granted through interactive UI, never headlessly. **This is flagged as required follow-up,
 not a blocker:** re-run `HealthKitStoreIntegrationTests` on a real device or simulator where
-FitBridge has already been launched once and the user granted write access to steps via the
+HealthLoom has already been launched once and the user granted write access to steps via the
 real onboarding flow (WP-10) — nothing in this session's mock-store coverage or the two
 compilation checks above suggests it will behave differently, but it has not actually
 executed against a real store end-to-end. **Verification performed in this session:**
@@ -952,13 +952,13 @@ no raw error objects or health values are ever stored in `SyncState.lastError`, 
 
 ## WP-10 · Minimal dashboard + onboarding (P0 UI)
 
-Built the full app-target UI slice under `FitBridgeApp/`, replacing WP-01's placeholder
+Built the full app-target UI slice under `HealthLoomApp/`, replacing WP-01's placeholder
 `ContentView`. **`DI/`** (4 new files) — `LaunchConfiguration` (reads
 `ProcessInfo.processInfo.arguments` for `-UITestStubGoogle`/`-UITestSeedData`, both of
 which force an in-memory `ModelContainer`); `AppEnvironment` (`@Observable @MainActor`,
 holds `ModelContainer`, `HealthKitAuth`, `GoogleAuthManager`, `SyncEngine`, and a
 `consentCoordinator`, injected into the SwiftUI environment via `.environment(_:)` in
-`FitBridgeApp.swift`, read back via `@Environment(AppEnvironment.self)`); a small
+`HealthLoomApp.swift`, read back via `@Environment(AppEnvironment.self)`); a small
 app-owned `GoogleConsentCoordinating` protocol (`LiveGoogleConsentCoordinator` wraps the
 real `GoogleAuthManager.beginConsent`; `StubGoogleConsentCoordinator` used only under
 `-UITestStubGoogle`) so onboarding code never depends on the concrete actor directly; and
@@ -971,7 +971,7 @@ step. **`Dashboard/`** (2 files) — `DashboardView` (`@Query(sort: \SyncState.d
 a "Sync now" toolbar button calling `syncEngine.syncAll(types:)`, and a data-freshness
 header quoting architecture.md §1's "~15 min" framing) and `SyncTypeRow` (one row per P0
 type: status icon, item count, last-synced via `RelativeDateTimeFormatter` ("Synced 9m
-ago"), error text when `lastStatus == "error"`). `project.yml` gained a `FitBridgeUITests`
+ago"), error text when `lastStatus == "error"`). `project.yml` gained a `HealthLoomUITests`
 (`bundle.ui-testing`) target and scheme entry (none existed before this WP).
 
 **Real API shapes discovered vs. the plan's illustrative sketches (all read from source
@@ -1052,16 +1052,16 @@ render rather than vanish").
 **Verification performed in this session, on a real simulator, not settled for
 typecheck-only (WP-10's explicit ask):** toolchain — Xcode 26.4.1, iOS 26.4.1 simulator
 runtime, "iPhone 17 Pro" simulator (`50EC4D33-A8EE-4A91-9617-8B2B757B971D`).
-`xcodegen generate` → `xcodebuild build -scheme FitBridge -destination 'id=...'` —
+`xcodegen generate` → `xcodebuild build -scheme HealthLoom -destination 'id=...'` —
 **BUILD SUCCEEDED**, zero warnings, zero errors. `xcodebuild build-for-testing` —
-**TEST BUILD SUCCEEDED**, including the new `FitBridgeUITests` target (which needed its
+**TEST BUILD SUCCEEDED**, including the new `HealthLoomUITests` target (which needed its
 own `SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated` override in `project.yml` — the
 project-wide `MainActor` default, correct for the app/onboarding/dashboard code, conflicts
 with `XCTestCase`'s own `nonisolated` lifecycle methods; individual test methods that
 touch `XCUIApplication` are annotated `@MainActor` explicitly instead). `xcodebuild test
--scheme FitBridge -destination 'id=...'` (the full scheme, both `FitBridgeTests` and
-`FitBridgeUITests`) — **TEST SUCCEEDED**: `FitBridgeTests` 1/1 (WP-01's placeholder,
-untouched), `FitBridgeUITests` 2/2 (`DashboardUITests`, `OnboardingUITests`), 0 failures,
+-scheme HealthLoom -destination 'id=...'` (the full scheme, both `HealthLoomTests` and
+`HealthLoomUITests`) — **TEST SUCCEEDED**: `HealthLoomTests` 1/1 (WP-01's placeholder,
+untouched), `HealthLoomUITests` 2/2 (`DashboardUITests`, `OnboardingUITests`), 0 failures,
 0 warnings, run three times total during debugging (the last one clean end-to-end).
 Re-ran `swift test -Xswiftc -warnings-as-errors` in all five packages after finishing —
 still 152/38 combined (CoreModel 15/6, Secrets 14/3, GoogleHealthClient 35/7, SyncKit
@@ -1078,7 +1078,7 @@ test drives the real HealthKit permission sheet rather than stubbing it — WP-1
 "Tests" line only names `-UITestStubGoogle`, and test-plan.md §5 explicitly says "handle
 system alert" for this exact smoke test, so this is the plan's intent, not a deviation,
 but it does make this one test the slowest and most environment-sensitive in the suite
-(a fresh simulator with no prior HealthKit authorization for FitBridge is required for
+(a fresh simulator with no prior HealthKit authorization for HealthLoom is required for
 the "Turn On All" flow to appear at all; a simulator where authorization was already
 granted skips the sheet entirely and the test's waits simply time out quickly and
 proceed — both paths were exercised in this session via `xcrun simctl uninstall`
@@ -1127,7 +1127,7 @@ continues to dispatch off `GoogleDataType.writability` exactly as WP-07 establis
 (`decideHealthKitMapped`'s switch only gained cases; the outer `decide(_:)` routing
 shape is untouched). Every new emitted sample goes through the same shared
 `metadata(for:)` helper WP-07 wrote, so `HKMetadataKeyExternalUUID`/
-`"fitbridge.externalID"`/`"fitbridge.sourceDevice"` stamping is automatic and was never
+`"healthloom.externalID"`/`"healthloom.sourceDevice"` stamping is automatic and was never
 re-implemented per type.
 
 **New `MappedUnit` cases** (`MappedTypes.swift`) — `.meter`, `.kilocalorie`, `.fraction`,
@@ -1376,13 +1376,13 @@ WP-08 stub's `([HKObject]) throws` to `(MappedWorkout) async throws -> HKWorkout
 **`HealthKitWriter.saveWorkout(_:)` — the real implementation, replacing the WP-08 stub:**
 requests a `WorkoutBuilding` from the injected `workoutBuilderFactory` (activity type via
 `makeHKWorkoutActivityType()`, `device: nil` — Google's source device is carried as
-`fitbridge.sourceDevice` metadata, not a real `HKDevice`, matching this codebase's existing
+`healthloom.sourceDevice` metadata, not a real `HKDevice`, matching this codebase's existing
 posture of never fabricating one), then `beginCollection(at: workout.start)` →
 (if present) builds `HKQuantitySample`s for `HKQuantityTypeIdentifierDistanceWalkingRunning`
 (meters) and `HKQuantityTypeIdentifierActiveEnergyBurned` (kilocalories), each stamped with
 the workout's own metadata, and `addSamples(_:)`s them together → `addMetadata(_:)` (the
-workout's own D4 metadata: `HKMetadataKeyExternalUUID`/`fitbridge.externalID`/
-`fitbridge.sourceDevice`, via the now-internal `makeHKMetadataDictionary()`) →
+workout's own D4 metadata: `HKMetadataKeyExternalUUID`/`healthloom.externalID`/
+`healthloom.sourceDevice`, via the now-internal `makeHKMetadataDictionary()`) →
 `endCollection(at: workout.end)` → `finishWorkout()`, returned as-is
 (`@discardableResult ... -> HKWorkout?`). **Return-value contract, taken directly from
 `HKWorkoutBuilder.finishWorkout()`'s own doc comment** ("If both workout and error are nil
@@ -1697,14 +1697,14 @@ plumbing was built by WP-02 in anticipation of this WP, confirmed by reading it,
 wiring an actual `LocalSample` → `ProfileField` conversion through it is WP-19/20's job
 (`KnowledgeProfile`/`ContextAssembler` don't exist yet), not this WP's.
 
-**App-target UI (`FitBridgeApp/Dashboard/`), the actual new surface this WP adds:**
+**App-target UI (`HealthLoomApp/Dashboard/`), the actual new surface this WP adds:**
 `LocalOnlyTypeRow.swift` (new view) renders one row per P1 local-only type from an array of
 `LocalSample`s (not a `SyncState`, which these four types never get) — name, item count,
 last-sample-relative-time (`RelativeDateTimeFormatter`, mirroring `SyncTypeRow`'s
 `lastSyncedText`, "No data yet" when the array is empty), an always-present "Not in Apple
 Health" badge, and — only for ECG/IRN, via `isClinicalType(_:)` — an additional "Clinical ·
 excluded from AI" indicator. `AppEnvironment.p1LocalOnlyTypes` (new static constant,
-`FitBridgeApp/DI/AppEnvironment.swift`, styled after the existing `p0Types`) is the fixed
+`HealthLoomApp/DI/AppEnvironment.swift`, styled after the existing `p0Types`) is the fixed
 four-type list `DashboardView` iterates — deliberately a plain literal, not "every
 `GoogleDataType` where `.writability == .localOnly`" derived at this call site: this WP's
 brief names exactly these four as P1's scope, not "whatever CoreModel's table happens to
@@ -1778,13 +1778,13 @@ own changes were complete (153 pre-existing + 8 new: 7 in the new `ClinicalClass
 suite + 1 extending `SyncEngineTests`). Then re-ran `swift test -Xswiftc -warnings-as-errors`
 in `Packages/CoreModel` (15/6), `Packages/Secrets` (14/3), and `Packages/GoogleHealthClient`
 (35/7) without editing any of them — all passing, 0 failures, 0 warnings. `xcodegen generate`
-→ `xcodebuild build -scheme FitBridge -destination 'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'`
+→ `xcodebuild build -scheme HealthLoom -destination 'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'`
 (the same "iPhone 17 Pro" simulator WP-10 used) — **BUILD SUCCEEDED**, zero warnings,
 zero errors. `xcodebuild build-for-testing` — **TEST BUILD SUCCEEDED**. `xcodebuild test`
-(both the targeted `DashboardUITests` and the full `FitBridge` scheme, `FitBridgeTests` +
-`FitBridgeUITests`) — **TEST SUCCEEDED** every run, including three repeats while fixing the
-`Label`-identifier and freshness-header pitfalls above; the final run: `FitBridgeTests` 1/1,
-`FitBridgeUITests` 3/3 (`OnboardingUITests` unaffected, both `DashboardUITests` passing).
+(both the targeted `DashboardUITests` and the full `HealthLoom` scheme, `HealthLoomTests` +
+`HealthLoomUITests`) — **TEST SUCCEEDED** every run, including three repeats while fixing the
+`Label`-identifier and freshness-header pitfalls above; the final run: `HealthLoomTests` 1/1,
+`HealthLoomUITests` 3/3 (`OnboardingUITests` unaffected, both `DashboardUITests` passing).
 **A transient, unrelated failure surfaced mid-session and is recorded here rather than
 "fixed," per the handoff protocol's coordination note:** partway through, `swift test` in
 `Packages/SyncKit` twice failed on non-exhaustive switches over `MappedUnit`
@@ -1798,7 +1798,7 @@ WP-13 finish propagating the new case, after which the package built and tested 
 reflecting WP-13's further progress too, not just this WP's own changes):** `Packages/SyncKit`
 **170 tests / 15 suites**, 0 failures, 0 warnings (WP-13 had added a ninth suite and nine more
 tests of its own by this point); `CoreModel` 15/6, `Secrets` 14/3, `GoogleHealthClient` 35/7,
-`CoachKit` 1/0 unchanged; the app-target build and `DashboardUITests`/`FitBridgeTests` were
+`CoachKit` 1/0 unchanged; the app-target build and `DashboardUITests`/`HealthLoomTests` were
 re-run against this final state too — still **BUILD SUCCEEDED** / **TEST SUCCEEDED**.
 
 **No CoreModel gap, no genuine routing/upsert bug found, nothing deferred as a blocking
@@ -2045,7 +2045,7 @@ one has already flagged, still gated on P-1.3.
 
 ## WP-17 · Sync settings + incremental scopes
 
-Built a new `FitBridgeApp/Settings/` folder (three files) plus one new app-target unit test
+Built a new `HealthLoomApp/Settings/` folder (three files) plus one new app-target unit test
 file — no package under `Packages/` was touched, per this WP's scope.
 
 **`ensure(scopes:)` already existed — no `GoogleAuthManager` change was needed.** Per this
@@ -2093,9 +2093,9 @@ plus instance conveniences (`isEnabled(_:)`, `setEnabled(_:for:)`, `filteredForS
 `requiredScopes(toEnable:)`) that wrap them against the instance's live `disabledTypes`.
 
 **Where the disabled-type filter lives (deliverable 3) — the actual design problem this WP had
-to solve given the "don't touch `SyncEngine.swift`/`FitBridgeApp.swift`" fence:** the filter
+to solve given the "don't touch `SyncEngine.swift`/`HealthLoomApp.swift`" fence:** the filter
 can't live inside the sync engine (SyncKit, off-limits) or the background-task registration
-site (`FitBridgeApp.swift`, off-limits — and, as of this session, WP-16's in-flight territory,
+site (`HealthLoomApp.swift`, off-limits — and, as of this session, WP-16's in-flight territory,
 see the build-verification note below). It lives as a pure function on `SyncPreferences`
 instead, and **every caller of `SyncEngine.syncAll(types:)` is expected to run its candidate
 type list through it first.** This session wires the one call site currently in the app:
@@ -2143,22 +2143,22 @@ list-section entry) rather than replacing this one. Checked `git status`/file mt
 collision was possible in-session, but this is recorded here in case WP-15 lands after.
 
 **`project.yml` deviation, not anticipated going in, discovered only by actually running
-`xcodebuild test`:** `FitBridgeTests` had no `dependencies:` entry at all (WP-01's placeholder
+`xcodebuild test`:** `HealthLoomTests` had no `dependencies:` entry at all (WP-01's placeholder
 test never imported anything). Its `BUNDLE_LOADER = "$(TEST_HOST)"` build setting is inferred by
 xcodegen regardless, which is enough for Xcode to *host* the bundle inside the app, but **not**
 enough for the linker to resolve symbols — the new `SyncPreferencesTests.swift`'s `@testable
-import FitBridge` type-checked fine but failed at link time with dozens of "Undefined symbol"
-errors for every `FitBridge`/`CoreModel` symbol referenced, plus an explicit compiler warning
+import HealthLoom` type-checked fine but failed at link time with dozens of "Undefined symbol"
+errors for every `HealthLoom`/`CoreModel` symbol referenced, plus an explicit compiler warning
 naming the missing dependency. Fixed by adding
 
 ```yaml
-FitBridgeTests:
+HealthLoomTests:
   ...
   dependencies:
-    - target: FitBridge
+    - target: HealthLoom
 ```
 
-(xcodegen's standard recipe for a hosted unit-test target) — `FitBridge`'s own transitive
+(xcodegen's standard recipe for a hosted unit-test target) — `HealthLoom`'s own transitive
 package links (CoreModel, Secrets, GoogleHealthClient, SyncKit, CoachKit) came along for free,
 no per-package entry needed. This is a one-line, additive, infrastructure-only change (not a
 source file, and not one of the explicitly fenced-off packages/files); flagged here per the
@@ -2167,8 +2167,8 @@ note the deviation" clause, since strictly speaking this WP's brief said "you sh
 to edit project.yml" (true for *source* globbing, but this gap was a pre-existing test-target
 wiring hole that only this WP's first real app-target unit test happened to expose).
 
-**Tests** (`FitBridgeTests/SyncPreferencesTests.swift`, 17 new — this WP's own file is the
-*first* real test in `FitBridgeTests` beyond WP-01's placeholder): `SyncPreferencesPureFunctionTests`
+**Tests** (`HealthLoomTests/SyncPreferencesTests.swift`, 17 new — this WP's own file is the
+*first* real test in `HealthLoomTests` beyond WP-01's placeholder): `SyncPreferencesPureFunctionTests`
 (9, no `UserDefaults` involved at all) — `filterEnabled` excludes a disabled type, no-op when
 nothing's disabled, empties out when everything's disabled, ignores a disabled type absent from
 the candidate list (the WP's literal "disabled type skipped by `syncAll`" ask, tested as the
@@ -2190,11 +2190,11 @@ just that the API compiles).
 expected. Re-ran the same command in all five packages together: `CoreModel` 15/6, `Secrets`
 14/3, `GoogleHealthClient` 35/7, `SyncKit` 205/24 (grown from 197/20 earlier in the session —
 WP-15/WP-16 landing their own tests concurrently, none of it touched here), `CoachKit` 1/0 — all
-passing, 0 failures, 0 warnings. `xcodegen generate` + `xcodebuild build -scheme FitBridge
+passing, 0 failures, 0 warnings. `xcodegen generate` + `xcodebuild build -scheme HealthLoom
 -destination 'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'` ("iPhone 17 Pro" simulator, matching
 prior WPs' device) — **BUILD SUCCEEDED**, zero errors, zero warnings. `xcodebuild test` (full
-`FitBridge` scheme) — **TEST SUCCEEDED**: `FitBridgeTests` **17 tests / 2 suites, 0 failures**
-(the pre-existing placeholder + this WP's 17 new ones); `FitBridgeUITests` **3/3** unaffected
+`HealthLoom` scheme) — **TEST SUCCEEDED**: `HealthLoomTests` **17 tests / 2 suites, 0 failures**
+(the pre-existing placeholder + this WP's 17 new ones); `HealthLoomUITests` **3/3** unaffected
 (`DashboardUITests` ×2, `OnboardingUITests` ×1).
 
 **Transient, unrelated failures hit mid-session and recorded rather than fixed, per the handoff
@@ -2207,7 +2207,7 @@ mid-edit in its own fenced-off folder; a background retry loop (`until swift tes
 20; done`) confirmed SyncKit reached a clean, passing state (197/20 at that point) before this
 session's own app-level build/test ran, and it has since grown further (205/24) as WP-15/WP-16
 kept landing work — never touched. (2) A later `xcodebuild build` failed with ten+ MainActor-
-isolation errors **entirely inside `FitBridgeApp.swift`** (`BGTaskScheduler` registration,
+isolation errors **entirely inside `HealthLoomApp.swift`** (`BGTaskScheduler` registration,
 `logger`/`identifier`/`configuration` static properties referenced from a nonisolated closure
 context) — this file is explicitly fenced off as WP-16's territory and was never touched here;
 confirmed by reading the errors (all inside WP-16's background-sync registration code, none in
@@ -2220,7 +2220,7 @@ failure is entirely WP-16's in-flight code, not this WP's.
 
 **Deliberately deferred, as scoped:** wiring WP-16's background handler to consult
 `SyncPreferences` itself (documented as a coordination point, not implemented here — WP-16
-owns `FitBridgeApp.swift`/`SyncKit/BackgroundSync/`); any UI test for the Settings screen or the
+owns `HealthLoomApp.swift`/`SyncKit/BackgroundSync/`); any UI test for the Settings screen or the
 incremental-consent flow (this WP's "Tests" line only asks for the two pure functions above,
 tested as such — not full integration, matching the brief's explicit instruction); an "is this
 scope currently granted" indicator per row (would need an async per-row read of
@@ -2241,7 +2241,7 @@ this WP's part; recorded here only to close the loop on that coordination flag.
 
 Built `Packages/SyncKit/Sources/SyncKit/Backfill/` (three new files:
 `BackfillTypes.swift`, `BackfillCoordinator.swift`,
-`SyncEngine+BackfillBusyProbe.swift`) plus `FitBridgeApp/Backfill/` (two new
+`SyncEngine+BackfillBusyProbe.swift`) plus `HealthLoomApp/Backfill/` (two new
 files: `BackfillView.swift`, `BackfillTypeRow.swift`), per architecture.md D5
 and this WP's four steps.
 
@@ -2283,7 +2283,7 @@ narrow protocol, `BackfillBusyProbe` (`Backfill/BackfillTypes.swift`), that
 `Backfill/` folder rather than adding a file to `SyncEngine/`, to keep this
 WP's footprint inside that concurrently-relevant file to the one method).
 Checked mid-session: WP-16 never touched `SyncEngine.swift` itself (its own
-footprint was `FitBridgeApp.swift` + a new `SyncKit/BackgroundSync/
+footprint was `HealthLoomApp.swift` + a new `SyncKit/BackgroundSync/
 BackgroundSyncPlanner.swift`), so no collision materialized in practice.
 
 **`backfillCursor`'s literal contract, honored, plus one small side-store
@@ -2300,7 +2300,7 @@ carry. Rather than adding a field to CoreModel (out of this WP's scope),
 `BackfillHorizonRecordStore` (`Backfill/BackfillTypes.swift`) is a tiny,
 separate, `UserDefaults`-backed key-value store (production:
 `UserDefaultsBackfillHorizonRecordStore`, namespaced
-`com.fitbridge.backfill.completedHorizon.<type>`) recording only "the
+`com.healthloom.backfill.completedHorizon.<type>`) recording only "the
 deepest horizon this type has fully completed." `BackfillCoordinator
 .runNextChunk(for:)` consults both: `backfillCursor` for the resumable
 chunk-walk position, the side-store to disambiguate a `nil` cursor and to
@@ -2330,7 +2330,7 @@ sleeper protocol invented) until every type reports done or the coordinator
 is paused; `pause()`/`resume()` and `setHorizon(_:)` are the UI's three
 control-surface calls.
 
-**UI (`FitBridgeApp/Backfill/`):** `BackfillView` — a horizon `Picker`, a
+**UI (`HealthLoomApp/Backfill/`):** `BackfillView` — a horizon `Picker`, a
 pause/resume `Button`, and a `List` of `BackfillTypeRow`s (one per type,
 "Mar 2026 … done" style progress text per WP-15's own illustrative phrasing,
 "Reached Mar 2026" mid-walk, "Not started yet" before the first chunk, plus
@@ -2402,13 +2402,13 @@ times). Re-ran the same command in each of `Packages/CoreModel` (15/6),
 `Packages/Secrets` (14/3), `Packages/GoogleHealthClient` (35/7), and
 `Packages/CoachKit` (1/0) without editing any of them — all five packages
 pass together, 0 failures, 0 warnings. `xcodegen generate` +
-`xcodebuild build -scheme FitBridge -destination
+`xcodebuild build -scheme HealthLoom -destination
 'id=50EC4D33-A8EE-4A91-9617-8B2B757B971D'` ("iPhone 17 Pro" simulator,
 iOS 26.4.1, matching prior WPs' device) — **BUILD SUCCEEDED**, zero errors,
 zero warnings, including the new `Backfill/` app-target files.
 `xcodebuild build-for-testing` — **TEST BUILD SUCCEEDED**. `xcodebuild test`
-(full `FitBridge` scheme) — **TEST SUCCEEDED**: `FitBridgeTests` 17/2 (WP-17's,
-unaffected), `FitBridgeUITests` 3/3 (`DashboardUITests` ×2, `OnboardingUITests`
+(full `HealthLoom` scheme) — **TEST SUCCEEDED**: `HealthLoomTests` 17/2 (WP-17's,
+unaffected), `HealthLoomUITests` 3/3 (`DashboardUITests` ×2, `OnboardingUITests`
 ×1), 0 failures. **One transient, unrelated failure hit and diagnosed rather
 than "fixed," per the handoff protocol:** an initial `xcodebuild test` run
 reported `TEST FAILED` with `OnboardingUITests` crashing/timing out during
@@ -2428,9 +2428,9 @@ walk to actually *start* automatically at app launch (this session has
 `BackfillView.task` call `start()` on appear instead, so the walk begins
 when the user opens the new screen, not at cold launch) — deliberately kept
 this way to avoid a second background-task-registration concern competing
-with WP-16's own `BGAppRefreshTask` wiring in `FitBridgeApp.swift`, a file
+with WP-16's own `BGAppRefreshTask` wiring in `HealthLoomApp.swift`, a file
 this WP does not touch; a future WP could call `backfillCoordinator.start()`
-once from `FitBridgeApp.init()` or a `BGProcessingTask` (the plan's own
+once from `HealthLoomApp.init()` or a `BGProcessingTask` (the plan's own
 WP-16 step 3 optionally mentions this) if always-on backfill without a user
 visiting the screen first is desired. `MappedObject.workout`/`.correlation`
 routing inside `BackfillCoordinator.processPage` deliberately mirrors
@@ -2444,7 +2444,7 @@ existing onboarding flow already requested).
 ## WP-16 · Background sync
 
 Built `Packages/SyncKit/Sources/SyncKit/BackgroundSync/BackgroundSyncPlanner.swift`
-(new folder, this WP's alone) plus edits scoped to exactly `FitBridgeApp/FitBridgeApp.swift`
+(new folder, this WP's alone) plus edits scoped to exactly `HealthLoomApp/HealthLoomApp.swift`
 in the app target, per the handoff brief's collision-avoidance instructions. **SyncKit
 side** — three pure, `nonisolated`, HealthKit-and-BackgroundTasks-free pieces, following
 the pure/impure split every prior SyncKit WP established: `SyncStateSnapshot` (a plain
@@ -2469,18 +2469,18 @@ recently-synced, stale, exact-boundary (inclusive) and one-second-inside-boundar
 no-due-types edge cases; budget under/at/beyond-limit; and the reschedule invariant across
 all four outcome shapes.
 
-**App-target side (`FitBridgeApp.swift` only, per the brief's file-scope restriction —
+**App-target side (`HealthLoomApp.swift` only, per the brief's file-scope restriction —
 did not touch `AppEnvironment.swift`, `Settings/` (WP-17), or `Backfill/` (WP-15)):**
-`FitBridgeApp.init()` constructs `AppEnvironment` (unchanged), then — still on
+`HealthLoomApp.init()` constructs `AppEnvironment` (unchanged), then — still on
 `MainActor`, synchronously, before `init()` returns, matching Apple's "register before
 `applicationDidFinishLaunching` returns" contract translated to a SwiftUI-lifecycle app
 with no `UIApplicationDelegateAdaptor` — captures `environment.modelContainer`,
 `environment.syncEngine`, and `GoogleDataType.allCases.filter { $0.writability != .skip }`
 into a new `private struct BackgroundSyncLaunchContext: Sendable`, then calls
-`FitBridgeBackgroundSync.registerLaunchHandler(context:)` and `.scheduleNextRun()` (the
+`HealthLoomBackgroundSync.registerLaunchHandler(context:)` and `.scheduleNextRun()` (the
 "at launch" half of "schedule next... at launch AND in the handler"). A new private enum
-`FitBridgeBackgroundSync` (all members `nonisolated`) owns: `registerLaunchHandler`
-(`BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.fitbridge.sync.refresh",
+`HealthLoomBackgroundSync` (all members `nonisolated`) owns: `registerLaunchHandler`
+(`BGTaskScheduler.shared.register(forTaskWithIdentifier: "com.healthloom.sync.refresh",
 using: nil) { ... }`); `scheduleNextRun` (submits a `BGAppRefreshTaskRequest`, catching and
 logging — never crashing on — `.unavailable`/`.notPermitted`/`.tooManyPendingTaskRequests`);
 `handleLaunch(_:context:)` (the actual launch handler: reschedules **unconditionally as
@@ -2515,9 +2515,9 @@ own, distinct, **non**-`MainActor` actor (architecture.md §3's explicit list), 
 doc comments, not just WP-09/10's progress notes). Consequently the BG handler needs **no
 hop onto `MainActor`** to call it — entering a different, non-MainActor actor is symmetric
 regardless of the caller's own isolation, so hopping to `MainActor` first would only add a
-pointless round-trip. Every function in `FitBridgeBackgroundSync` is therefore declared
+pointless round-trip. Every function in `HealthLoomBackgroundSync` is therefore declared
 `nonisolated`; the *only* `MainActor`-isolated step in this whole feature is the one-time
-DI capture in `FitBridgeApp.init()`. A related, non-obvious wrinkle surfaced only by
+DI capture in `HealthLoomApp.init()`. A related, non-obvious wrinkle surfaced only by
 compiling (not by reasoning): this app target's `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor`
 setting makes *every* declaration MainActor-isolated by default unless marked
 `nonisolated` — including plain `static let` string/struct constants and even
@@ -2567,19 +2567,19 @@ the plan describes, not a gap.
 
 **WP-15 coupling — deliberately not implemented, per this WP's explicit instructions:**
 WP-15's own progress entry (above) flags that `BackfillCoordinator.start()` could be
-called from `FitBridgeApp.init()` or a `BGProcessingTask` "if always-on backfill... is
+called from `HealthLoomApp.init()` or a `BGProcessingTask` "if always-on backfill... is
 desired," naming this exact file. Per this WP's brief ("do NOT implement that coupling
-yourself"), it is **not wired in** — `FitBridgeBackgroundSync` only ever calls
+yourself"), it is **not wired in** — `HealthLoomBackgroundSync` only ever calls
 `SyncEngine.sync(type:)`/incremental sync, never `BackfillCoordinator`. **Extension point
-for a future WP:** `FitBridgeApp.init()` already has a natural, obvious slot right after
-`FitBridgeBackgroundSync.registerLaunchHandler`/`.scheduleNextRun()` to also register a
+for a future WP:** `HealthLoomApp.init()` already has a natural, obvious slot right after
+`HealthLoomBackgroundSync.registerLaunchHandler`/`.scheduleNextRun()` to also register a
 second `BGProcessingTask` (per WP-16 step 3's "optionally a BGProcessingTask for backfill
 chunks") that calls into a `BackfillCoordinator` instance from `AppEnvironment` the same
 way this WP captures `syncEngine`/`modelContainer` — no structural change to this file
 would be needed, just a second `BackgroundSyncLaunchContext`-shaped capture and a second
 `register`/`submit` pair with a new identifier (which would first need adding to
 `project.yml`'s `BGTaskSchedulerPermittedIdentifiers`, currently only listing
-`com.fitbridge.sync.refresh`) and `UIBackgroundModes` including `processing` in addition
+`com.healthloom.sync.refresh`) and `UIBackgroundModes` including `processing` in addition
 to (see below) `fetch`.
 
 **Possible `project.yml` gap, flagged rather than silently edited or silently ignored (the
@@ -2601,19 +2601,19 @@ for a human or a future WP with `project.yml` authority to add `fetch` alongside
 **Manual verification, not automatable in this environment (per the plan's own text,
 explicitly not faked):** the real `BGTaskScheduler` register → submit → background-launch
 flow is verified via lldb's `e -l objc -- (void)[[BGTaskScheduler sharedScheduler]
-_simulateLaunchForTaskWithIdentifier:@"com.fitbridge.sync.refresh"]` against a running
+_simulateLaunchForTaskWithIdentifier:@"com.healthloom.sync.refresh"]` against a running
 debug session — this requires an interactive debugger attached to a live app process and
 was **not run in this session** (this agent has no interactive lldb/Xcode-debugger
 access). What *was* verified, for real, in this session: (1) `swift test -Xswiftc
 -warnings-as-errors` in `Packages/SyncKit` — the new 21-test `BackgroundSyncPlannerTests`
 suite passes standalone and as part of the full package (**205 tests / 24 suites**, 0
 failures, 0 warnings, including WP-15's concurrently-landed `Backfill` tests); (2) a real
-`xcodebuild build`/`test -scheme FitBridge` on an iOS 26.4.1 simulator, which exercises
-`FitBridgeApp.init()` → `registerLaunchHandler`/`scheduleNextRun` for real on every test
+`xcodebuild build`/`test -scheme HealthLoom` on an iOS 26.4.1 simulator, which exercises
+`HealthLoomApp.init()` → `registerLaunchHandler`/`scheduleNextRun` for real on every test
 launch — device logs (`xcrun simctl spawn ... log show`) confirm
 `BackgroundTasks:Framework submitTaskRequest: <BGAppRefreshTaskRequest:
-com.fitbridge.sync.refresh, earliestBeginDate: ...>` fires on every app launch, followed by
-this WP's own redacted log line (`[com.fitbridge.app:BackgroundSync] Failed to schedule
+com.healthloom.sync.refresh, earliestBeginDate: ...>` fires on every app launch, followed by
+this WP's own redacted log line (`[com.healthloom.app:BackgroundSync] Failed to schedule
 next background sync: Error Domain=BGTaskSchedulerErrorDomain Code=1`, i.e.
 `.unavailable` — exactly Apple's documented Simulator behavior, "doesn't support
 background processing," not a bug) — confirming the registration/schedule code path runs,
@@ -2635,7 +2635,7 @@ patience) that looked at first like a crash caused by this WP's new code. Invest
 WP's `BackgroundSync` log lines appearing normally beforehand; (b) a **different**
 Claude Code agent process (distinct `/tmp/claude-<id>-cwd` marker, i.e. WP-15 and/or
 WP-17's concurrent session) was independently running its own `xcodebuild test -scheme
-FitBridge -destination id=50EC4D33-...` against the **exact same booted simulator** at the
+HealthLoom -destination id=50EC4D33-...` against the **exact same booted simulator** at the
 same time — two/three concurrent `xcodebuild test` invocations hammering one simulator
 device explains the churn far better than a code bug would. Re-running against a
 different, previously-idle simulator (`08CDB949-...`, also "iPhone 17 Pro" — matching
@@ -2649,7 +2649,7 @@ assuming their own diff is at fault.
 `dueTypes(...)` is generic over `Type: Hashable`, not hard-coded to `[GoogleDataType]` as
 the plan's illustrative signature shows — the plan explicitly allows "(or similar)," and
 genericizing keeps `BackgroundSyncPlanner.swift` free of a `CoreModel` import despite
-SyncKit already depending on it elsewhere; `FitBridgeApp.swift` calls it at
+SyncKit already depending on it elsewhere; `HealthLoomApp.swift` calls it at
 `Type == GoogleDataType` via ordinary inference. (2) The budget is enforced by iterating
 `SyncEngine.sync(type:)` per type rather than calling `syncAll(types:)` once — a
 structural choice (see "Budget/expiration" above) so `BackgroundSyncBudget` is genuinely
@@ -2661,20 +2661,20 @@ documented as a follow-up extension point rather than attempted. **Verification 
 `swift test -Xswiftc -warnings-as-errors` — CoreModel 15/6, Secrets 14/3,
 GoogleHealthClient 35/7, SyncKit 205/24 (21 new), CoachKit 1/0, all five still pass
 together with 0 failures/0 warnings; `xcodegen generate` + `xcodebuild build -scheme
-FitBridge` — **BUILD SUCCEEDED**, 0 warnings/errors; `xcodebuild test -scheme FitBridge`
+HealthLoom` — **BUILD SUCCEEDED**, 0 warnings/errors; `xcodebuild test -scheme HealthLoom`
 on a real iOS 26.4.1 simulator (`08CDB949-2DA3-4F1E-9F03-48FE5514320B`, "iPhone 17 Pro") —
-**TEST SUCCEEDED**, `FitBridgeTests` (1 placeholder + WP-17's 17 `SyncPreferences` tests,
-untouched by this WP) and `FitBridgeUITests` (3/3, including both pre-existing WP-10
+**TEST SUCCEEDED**, `HealthLoomTests` (1 placeholder + WP-17's 17 `SyncPreferences` tests,
+untouched by this WP) and `HealthLoomUITests` (3/3, including both pre-existing WP-10
 tests) all passing, re-run after the budget-loop refactor to confirm no regression.
 
 ## Orchestrator note — post WP-15/16/17 reconciliation
 
 After WP-15, WP-16, and WP-17 landed concurrently, ran independent verification: all five
 packages green together (CoreModel 15/6, Secrets 14/3, GoogleHealthClient 35/7, SyncKit
-205/24, CoachKit 1/0 — 270 tests), and a solo `xcodebuild test -scheme FitBridge` on a
-single clean simulator (no concurrent agents) — **TEST SUCCEEDED**: `FitBridgeUITests` 3/3,
-`FitBridgeTests` 17/17 (the scheme-level XCTest summary line under-reports this suite
-since it's Swift Testing, not XCTest — verified with `-only-testing:FitBridgeTests` and
+205/24, CoachKit 1/0 — 270 tests), and a solo `xcodebuild test -scheme HealthLoom` on a
+single clean simulator (no concurrent agents) — **TEST SUCCEEDED**: `HealthLoomUITests` 3/3,
+`HealthLoomTests` 17/17 (the scheme-level XCTest summary line under-reports this suite
+since it's Swift Testing, not XCTest — verified with `-only-testing:HealthLoomTests` and
 full verbose output to confirm all 17 cases execute and pass).
 
 Reconciled a three-way discrepancy: WP-17 saw an app-exit during UI tests and attributed
@@ -2700,12 +2700,12 @@ extend.
 
 Built a new `Packages/SyncKit/Sources/SyncKit/Diagnostics/` folder (7 files), a new
 `Packages/SyncKit/Tests/SyncKitTests/Diagnostics/` folder (4 files), a new
-`FitBridgeApp/Diagnostics/` folder (2 files), one additive nav-link edit to
-`FitBridgeApp/Settings/SettingsView.swift`, one minimal additive hook in
+`HealthLoomApp/Diagnostics/` folder (2 files), one additive nav-link edit to
+`HealthLoomApp/Settings/SettingsView.swift`, one minimal additive hook in
 `Packages/SyncKit/Sources/SyncKit/SyncEngine/SyncEngine.swift`, and one minimal additive
-DI-wiring edit to `FitBridgeApp/DI/AppEnvironment.swift` (justified below). Every other
+DI-wiring edit to `HealthLoomApp/DI/AppEnvironment.swift` (justified below). Every other
 SyncKit subfolder named read-only in this WP's brief (`TypeMapper/`, `HealthKitWriter/`,
-`HealthKit/`, `Routing/`, `Backfill/`, `BackgroundSync/`), plus `FitBridgeApp.swift` and
+`HealthKit/`, `Routing/`, `Backfill/`, `BackgroundSync/`), plus `HealthLoomApp.swift` and
 the app-target `Backfill/` folder, were not touched.
 
 **Ring buffer: file-backed JSON, not a second SwiftData model.** `SyncLogEntry`
@@ -2714,7 +2714,7 @@ errorMessage}` struct; `SyncLogStore` (`Diagnostics/SyncLogStore.swift`) is an `
 holding a capped `[SyncLogEntry]`, mirrored to disk via an injected `SyncLogPersisting`
 seam (`Diagnostics/SyncLogPersistence.swift`) whose production conformer,
 `FileSyncLogPersistence`, writes one JSON array to
-`Application Support/FitBridge/SyncLog.json` (a sibling of `CoreModel.store`, `NSFileProtectionComplete`
+`Application Support/HealthLoom/SyncLog.json` (a sibling of `CoreModel.store`, `NSFileProtectionComplete`
 applied identically to `CoreModel.swift`'s own on-disk store, `#if os(iOS)`-guarded for
 the same reason that file documents). Chose file-backed over "a new lightweight SwiftData
 model" (the WP's other offered option) because: (1) `CoreModel.modelTypes`'s schema array
@@ -2781,9 +2781,9 @@ poses the question directly ("does SyncOutcome already carry what's needed and c
 subscribe/record without editing SyncEngine.swift itself?") and its answer path leads
 to "an optional injected `SyncRunRecording` callback... on SyncEngine" — but that hook
 still needs a production wire-up, and every other production consumer of `SyncEngine`
-(`DashboardView`'s `syncNow()`, `FitBridgeApp`'s background handler) is either out of this
+(`DashboardView`'s `syncNow()`, `HealthLoomApp`'s background handler) is either out of this
 WP's stated file scope or fenced off entirely. `AppEnvironment.swift` is the app's one DI
-root and is *not* in this WP's forbidden-files list (unlike `FitBridgeApp.swift` and the
+root and is *not* in this WP's forbidden-files list (unlike `HealthLoomApp.swift` and the
 app-target `Backfill/` folder, which are named explicitly) — and WP-15 already established
 that a single new stored property plus one new constructor argument on the existing
 `SyncEngine(...)` call, clearly flagged in a doc comment, is an acceptable minimal
@@ -2814,8 +2814,8 @@ in `BackfillView`, unchanged), and `DiagnosticsLog.backfill` is declared (see be
 for whichever future WP owns `Backfill/` to wire in.
 
 **`os.Logger` categories (`Diagnostics/DiagnosticsLog.swift`).** Checked for WP-16's
-existing usage before adding anything, per the brief's explicit instruction: `FitBridgeApp.swift`'s
-`FitBridgeBackgroundSync` enum already declares `Logger(subsystem: "com.fitbridge.app",
+existing usage before adding anything, per the brief's explicit instruction: `HealthLoomApp.swift`'s
+`HealthLoomBackgroundSync` enum already declares `Logger(subsystem: "com.healthloom.app",
 category: "BackgroundSync")`, `private` to that file and unreachable from this package
 (different module entirely). `DiagnosticsLog.background` reuses the identical subsystem
 string and category name (the closest thing to "reuse, don't duplicate" achievable across
@@ -2829,7 +2829,7 @@ and `.auth` are declared for the same one-category-per-subsystem forward consist
 have no call site in this session — `Backfill/` is read-only (see above) and
 `GoogleHealthClient` (which would own auth-flow logging) is likewise read-only for this WP.
 
-**Settings → "Sync Log" viewer (`FitBridgeApp/Diagnostics/`).** `SyncLogView.swift` reads
+**Settings → "Sync Log" viewer (`HealthLoomApp/Diagnostics/`).** `SyncLogView.swift` reads
 `appEnvironment.syncLogStore` (matching `BackfillView`'s own "read the DI root's actor
 directly" convention) and polls `recentEntries()` on a `.task` loop (3 s interval — this
 data changes far less often than backfill progress, so a slower poll than `BackfillView`'s
@@ -2876,15 +2876,15 @@ any of them — all five packages pass together, 293 tests total, 0 failures, 0 
 booted simulators and rebooted a single previously-idle one
 (`08CDB949-2DA3-4F1E-9F03-48FE5514320B`, "iPhone 17 Pro," the same device WP-16's
 post-reconciliation note used) before building, since no other agent should be sharing it
-this session. `xcodegen generate` + `xcodebuild build -scheme FitBridge -destination
+this session. `xcodegen generate` + `xcodebuild build -scheme HealthLoom -destination
 'id=08CDB949-2DA3-4F1E-9F03-48FE5514320B'` — **BUILD SUCCEEDED**, zero errors, zero
 warnings, including the new `Diagnostics/` app-target files. `xcodebuild test` (full
-`FitBridge` scheme) — **TEST SUCCEEDED**: `FitBridgeUITests` 3/3 (`DashboardUITests` ×2,
-`OnboardingUITests` ×1, all pre-existing and unaffected), `FitBridgeTests` — re-run with
-`-only-testing:FitBridgeTests` and verbose output (per WP-16/17's own note that the
+`HealthLoom` scheme) — **TEST SUCCEEDED**: `HealthLoomUITests` 3/3 (`DashboardUITests` ×2,
+`OnboardingUITests` ×1, all pre-existing and unaffected), `HealthLoomTests` — re-run with
+`-only-testing:HealthLoomTests` and verbose output (per WP-16/17's own note that the
 scheme-level XCTest summary under-reports a Swift Testing suite) confirms **17 tests / 2
 suites, 0 failures** (WP-17's `SyncPreferences` suite, untouched by this WP — this WP
-added no new `FitBridgeTests` file, since its two required "Tests:" lines are both
+added no new `HealthLoomTests` file, since its two required "Tests:" lines are both
 package-level pure-logic tests already covered in `Packages/SyncKit`).
 
 **Deviations / judgment calls (handoff protocol's "blocked?" clause):** (1) chose

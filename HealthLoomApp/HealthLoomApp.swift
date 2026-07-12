@@ -12,14 +12,14 @@ import SwiftUI
 /// work (architecture.md §2) -- WP-10's scope is the P0 vertical slice only.
 ///
 /// WP-16 (implementation-plan.md): also registers and drives the one
-/// `BGAppRefreshTask` this app schedules -- `com.fitbridge.sync.refresh`,
+/// `BGAppRefreshTask` this app schedules -- `com.healthloom.sync.refresh`,
 /// already declared in `project.yml`'s `BGTaskSchedulerPermittedIdentifiers`
 /// / `UIBackgroundModes` since WP-01. See "MARK: - Background sync (WP-16)"
 /// below for the full design writeup: why registration happens in `init()`,
 /// the concurrency-isolation decision for calling into `SyncEngine`, the
 /// reschedule-on-every-path structure, and expiration/cancellation handling.
 @main
-struct FitBridgeApp: App {
+struct HealthLoomApp: App {
     @State private var appEnvironment: AppEnvironment
 
     init() {
@@ -59,7 +59,7 @@ struct FitBridgeApp: App {
             // LocalSample routing) -- i.e. every case whose `.writability`
             // isn't `.skip`. Derived from CoreModel's own table rather than
             // hand-duplicating `AppEnvironment.p0Types`/`.p1LocalOnlyTypes`
-            // here (this WP's file scope is `FitBridgeApp.swift` only, not
+            // here (this WP's file scope is `HealthLoomApp.swift` only, not
             // `AppEnvironment.swift`) -- this is also strictly the broader,
             // more correct P1 set: it automatically includes distance,
             // floors, energy, resting HR, HRV, SpO2, respiratory rate,
@@ -70,8 +70,8 @@ struct FitBridgeApp: App {
             // added.
             syncableTypes: GoogleDataType.allCases.filter { $0.writability != .skip }
         )
-        FitBridgeBackgroundSync.registerLaunchHandler(context: backgroundSyncContext)
-        FitBridgeBackgroundSync.scheduleNextRun() // "at launch" half of "schedule next... at launch AND in the handler"
+        HealthLoomBackgroundSync.registerLaunchHandler(context: backgroundSyncContext)
+        HealthLoomBackgroundSync.scheduleNextRun() // "at launch" half of "schedule next... at launch AND in the handler"
     }
 
     var body: some Scene {
@@ -85,7 +85,7 @@ struct FitBridgeApp: App {
 
 // MARK: - Background sync (WP-16, implementation-plan.md)
 //
-// Registers `com.fitbridge.sync.refresh` as a `BGAppRefreshTask` and drives
+// Registers `com.healthloom.sync.refresh` as a `BGAppRefreshTask` and drives
 // it: determine due types (SyncKit's pure `dueTypes(...)` planner,
 // `Packages/SyncKit/Sources/SyncKit/BackgroundSync/BackgroundSyncPlanner.swift`)
 // -> call `SyncEngine.sync(type:)` type-by-type for exactly those, most-
@@ -119,13 +119,13 @@ struct FitBridgeApp: App {
 // correctness benefit.
 //
 // The one place this file *does* need `MainActor` is reading
-// `AppEnvironment`'s own DI (`FitBridgeApp.init()`, above) -- handled once,
+// `AppEnvironment`'s own DI (`HealthLoomApp.init()`, above) -- handled once,
 // synchronously, at launch, and never again from any of the `nonisolated`
 // code below.
 //
 // **Reschedule-on-every-path (WP-16 step 1, stated twice in the plan:
 // "schedule next on every run and in the handler," "always reschedule, even
-// on failure"):** `scheduleNextRun()` is called from `FitBridgeApp.init()`
+// on failure"):** `scheduleNextRun()` is called from `HealthLoomApp.init()`
 // ("at launch") and, unconditionally, as the very first statement of
 // `handleLaunch(_:context:)` below -- *before* any sync work starts, not
 // duplicated into a success branch and a failure branch. This is
@@ -177,13 +177,13 @@ struct FitBridgeApp: App {
 // -- it imports neither `BackgroundTasks` nor `HealthKit`, so it runs under
 // plain `swift test`. The real `BGTaskScheduler` register/submit/
 // simulate-launch flow has no automated-test seam reachable from this WP's
-// single-file app-target scope (`FitBridgeApp.swift` only, no new
-// `FitBridgeTests` file) and, per the plan's own text, is verified manually
+// single-file app-target scope (`HealthLoomApp.swift` only, no new
+// `HealthLoomTests` file) and, per the plan's own text, is verified manually
 // via lldb's `_simulateLaunchForTaskWithIdentifier:` on a real device/
 // simulator -- **not run in this session** (interactive-debugger-only;
 // documented here and in progress.md as an outstanding manual follow-up,
 // not faked).
-private enum FitBridgeBackgroundSync {
+private enum HealthLoomBackgroundSync {
     /// Matches `project.yml`'s `BGTaskSchedulerPermittedIdentifiers` entry
     /// and architecture.md's naming (WP-01). `nonisolated` (like every
     /// stored constant in this enum) so it's readable from the `nonisolated`
@@ -191,15 +191,15 @@ private enum FitBridgeBackgroundSync {
     /// `SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor` setting would otherwise
     /// make even a plain `String`-typed `static let` MainActor-isolated by
     /// default.
-    nonisolated static let identifier = "com.fitbridge.sync.refresh"
+    nonisolated static let identifier = "com.healthloom.sync.refresh"
 
     nonisolated private static let configuration = BackgroundSyncConfiguration()
-    nonisolated private static let logger = Logger(subsystem: "com.fitbridge.app", category: "BackgroundSync")
+    nonisolated private static let logger = Logger(subsystem: "com.healthloom.app", category: "BackgroundSync")
 
     /// WP-16 step 1: register the launch handler. Must be called exactly
     /// once per process launch (Apple's own doc comment on `register(...)`:
     /// "The system kills the app on the second registration of the same
-    /// task identifier") -- `FitBridgeApp.init()` runs exactly once per
+    /// task identifier") -- `HealthLoomApp.init()` runs exactly once per
     /// launch, so this is safe as written.
     ///
     /// Deliberately `nonisolated`, called from `init()` (`MainActor`) with
@@ -214,7 +214,7 @@ private enum FitBridgeBackgroundSync {
     /// `BGTaskScheduler.h`/`.apinotes` -- no `@Sendable`/actor annotation at
     /// all), and the system invokes it on an arbitrary background queue,
     /// never `MainActor`. Nesting it inside a `MainActor`-isolated function
-    /// (as `FitBridgeApp.init()` itself is) would risk the closure
+    /// (as `HealthLoomApp.init()` itself is) would risk the closure
     /// literal's isolation defaulting to match that ambient context per
     /// Swift's closure-isolation-inference rules -- nesting it here, where
     /// the enclosing function is `nonisolated`, removes that ambiguity
@@ -233,7 +233,7 @@ private enum FitBridgeBackgroundSync {
     }
 
     /// WP-16 step 1: "schedule next on every run and in the handler." Called
-    /// from `FitBridgeApp.init()` ("at launch") and, unconditionally, from
+    /// from `HealthLoomApp.init()` ("at launch") and, unconditionally, from
     /// the very start of `handleLaunch(_:context:)` ("in the handler").
     /// Failure to submit (`.unavailable` on the Simulator -- documented
     /// directly in this toolchain's `BGTaskScheduler.h`: "The app is running
@@ -357,7 +357,7 @@ private enum FitBridgeBackgroundSync {
     }
 }
 
-/// See `FitBridgeBackgroundSync.handleLaunch(_:context:)`'s doc comment for
+/// See `HealthLoomBackgroundSync.handleLaunch(_:context:)`'s doc comment for
 /// why this `@unchecked Sendable` box exists: `BGTask`/`BGAppRefreshTask`
 /// predates Swift concurrency and isn't `Sendable`-annotated, but
 /// `BGTaskScheduler` itself hands the launch handler exclusive ownership of
@@ -366,18 +366,18 @@ nonisolated private struct BackgroundTaskBox: @unchecked Sendable {
     let task: BGAppRefreshTask
 }
 
-/// Plain, fully `Sendable` bundle of exactly the DI `FitBridgeBackgroundSync`
-/// needs, captured once at launch (`FitBridgeApp.init()`, on `MainActor`) so
+/// Plain, fully `Sendable` bundle of exactly the DI `HealthLoomBackgroundSync`
+/// needs, captured once at launch (`HealthLoomApp.init()`, on `MainActor`) so
 /// every function in that enum can be `nonisolated` with no ambient
 /// `MainActor` context anywhere in its call tree -- see
-/// `FitBridgeBackgroundSync.registerLaunchHandler(context:)`'s doc comment
+/// `HealthLoomBackgroundSync.registerLaunchHandler(context:)`'s doc comment
 /// for why that specifically matters for the `BGTaskScheduler` launch-handler
 /// closure. Deliberately does *not* hold a reference to `AppEnvironment`
 /// itself (a plain, non-`Sendable`-declared `@MainActor` class) -- capturing
 /// the whole object in this long-lived, background-queue-invoked closure
 /// would require `AppEnvironment` to conform to `Sendable`, which is
 /// `AppEnvironment.swift`'s call to make, not this WP's (`AppEnvironment.swift`
-/// is outside this WP's file scope: only `FitBridgeApp.swift` is touched).
+/// is outside this WP's file scope: only `HealthLoomApp.swift` is touched).
 private struct BackgroundSyncLaunchContext: Sendable {
     var modelContainer: ModelContainer
     var syncEngine: SyncEngine

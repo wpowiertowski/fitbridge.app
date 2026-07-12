@@ -7,7 +7,7 @@
 // D-context §1)."
 //
 // Driven by `@Query` over CoreModel's `SyncState` (SwiftData), reading from
-// whichever `ModelContainer` `FitBridgeApp` put in the environment via
+// whichever `ModelContainer` `HealthLoomApp` put in the environment via
 // `.modelContainer(_:)` -- production, or an in-memory one seeded by
 // `AppEnvironment.seedDashboardFixtures` under `-UITestSeedData`. "Sync now"
 // calls the exact same `SyncEngine.syncAll(types:)` onboarding's
@@ -77,7 +77,7 @@ struct DashboardView: View {
                 // rather than touching the `.toolbar` WP-17 also edited.
                 Section { NavigationLink("Historical Backfill", destination: BackfillView()) }
             }
-            .navigationTitle("FitBridge")
+            .navigationTitle("HealthLoom")
             .toolbar {
                 // WP-17: nav link to the new Settings screen (per-type sync
                 // toggles). Placed at `.topBarLeading` so it doesn't compete
@@ -113,7 +113,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 4) {
             Label("About data freshness", systemImage: "clock")
                 .font(.subheadline.bold())
-            Text("Your Fitbit or Pixel Watch reaches Google roughly every 15 minutes while the Google Health app is open. FitBridge then pulls from Google each time you sync below -- this isn't a live feed.")
+            Text("Your Fitbit or Pixel Watch reaches Google roughly every 15 minutes while the Google Health app is open. HealthLoom then pulls from Google each time you sync below -- this isn't a live feed.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

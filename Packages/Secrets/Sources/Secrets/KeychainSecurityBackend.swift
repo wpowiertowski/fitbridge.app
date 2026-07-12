@@ -17,7 +17,7 @@
 //     the `kSecAttrAccessible` value.
 //
 // All items live under one generic-password service so a single
-// `SecItemCopyMatching` with `kSecMatchLimitAll` enumerates every FitBridge
+// `SecItemCopyMatching` with `kSecMatchLimitAll` enumerates every HealthLoom
 // secret for `allAccounts()` (used by `KeychainStore.deleteAll(matching:)`).
 
 import Foundation
@@ -30,7 +30,7 @@ nonisolated struct KeychainSecurityBackend: KeychainBackend {
     /// so a test run can never read, overwrite, or delete a real secret.
     let service: String
 
-    init(service: String = "com.fitbridge.secrets") {
+    init(service: String = "com.healthloom.secrets") {
         self.service = service
     }
 

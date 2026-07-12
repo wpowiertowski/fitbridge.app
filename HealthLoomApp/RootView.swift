@@ -4,7 +4,7 @@
 // completed, dashboard after. Replaces WP-01's placeholder `ContentView`.
 //
 // Initial route is decided once at construction (`startOnDashboard`, passed
-// down from `FitBridgeApp` reading `AppEnvironment.launchConfiguration`) so
+// down from `HealthLoomApp` reading `AppEnvironment.launchConfiguration`) so
 // `-UITestSeedData` UI test runs land directly on the dashboard without
 // flashing onboarding first (implementation-plan.md WP-10's "Tests" line:
 // "dashboard renders per-type states from a seeded in-memory container").

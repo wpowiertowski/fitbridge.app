@@ -62,7 +62,7 @@ jobs:
         run: swift test -Xswiftc -warnings-as-errors
 
   app:
-    name: xcodebuild build test (FitBridge scheme)
+    name: xcodebuild build test (HealthLoom scheme)
     runs-on: macos-26
     needs: packages
     steps:
@@ -92,7 +92,7 @@ jobs:
           # xcodegen ships via Homebrew on GitHub's macOS runners; project.yml
           # is the committed source of truth, the .xcodeproj itself is not
           # committed here (unlike lumivault.app, which commits its .xcodeproj
-          # directly -- FitBridge deliberately regenerates it in CI instead,
+          # directly -- HealthLoom deliberately regenerates it in CI instead,
           # to avoid .pbxproj merge conflicts across parallel work streams).
           brew install xcodegen
           xcodegen generate
@@ -115,13 +115,13 @@ jobs:
           fi
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
-      - name: Build + test FitBridge scheme
+      - name: Build + test HealthLoom scheme
         run: |
           set -euo pipefail
           dest="platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"
           xcodebuild build test \
-            -project FitBridge.xcodeproj \
-            -scheme FitBridge \
+            -project HealthLoom.xcodeproj \
+            -scheme HealthLoom \
             -destination "$dest" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             GCC_TREAT_WARNINGS_AS_ERRORS=YES

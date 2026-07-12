@@ -2,7 +2,7 @@
 //
 // WP-03 (implementation-plan.md) / architecture.md §2, D11.
 //
-// The one place FitBridge touches the Keychain. Callers only ever see
+// The one place HealthLoom touches the Keychain. Callers only ever see
 // `SecretKey` (never a raw string) and `SecretsError` (never a raw
 // `OSStatus` sprinkled through call sites). Values themselves are never
 // logged anywhere in this package.

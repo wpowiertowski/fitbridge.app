@@ -44,7 +44,7 @@ nonisolated public struct NullSyncLogPersistence: SyncLogPersisting {
     public func save(_ entries: [SyncLogEntry]) {}
 }
 
-/// Production store: one JSON file, `Application Support/FitBridge/SyncLog.json`
+/// Production store: one JSON file, `Application Support/HealthLoom/SyncLog.json`
 /// -- the same parent directory `CoreModel.swift`'s `productionStoreURL()`
 /// uses for `CoreModel.store`, kept as a sibling file rather than inside the
 /// SwiftData store itself (CoreModel's schema is closed to this WP, per its
@@ -69,7 +69,7 @@ nonisolated public final class FileSyncLogPersistence: SyncLogPersisting, @unche
             appropriateFor: nil,
             create: true
         )) ?? FileManager.default.temporaryDirectory
-        let directory = base.appending(path: "FitBridge", directoryHint: .isDirectory)
+        let directory = base.appending(path: "HealthLoom", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "SyncLog.json", directoryHint: .notDirectory)
     }

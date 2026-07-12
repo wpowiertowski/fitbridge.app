@@ -1,6 +1,6 @@
 // SecretKey.swift
 //
-// WP-03 (implementation-plan.md): the closed set of things FitBridge ever
+// WP-03 (implementation-plan.md): the closed set of things HealthLoom ever
 // stores in the Keychain. Deliberately an enum (not a free-form String) so
 // every call site is a compile-time-checked case — no typos, no accidental
 // collisions with unrelated Keychain items.

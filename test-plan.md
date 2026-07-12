@@ -1,4 +1,4 @@
-# Test Plan — FitBridge
+# Test Plan — HealthLoom
 
 Companion to [implementation-plan.md](implementation-plan.md) (per-WP required tests) and
 [architecture.md](architecture.md) (the decisions these tests protect). This document is
@@ -50,7 +50,7 @@ Conventions:
 ### 2.1 TypeMapper (SyncKit) — the correctness core
 
 Golden-file tests: one fixture per Google data type → assert exact HK type, unit, value,
-start/end, and metadata (`HKMetadataKeyExternalUUID`, `fitbridge.sourceDevice`).
+start/end, and metadata (`HKMetadataKeyExternalUUID`, `healthloom.sourceDevice`).
 
 Must-cover cases beyond the happy path per type:
 

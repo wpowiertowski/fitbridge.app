@@ -121,17 +121,17 @@ public struct MappedMetadata: Sendable, Hashable {
     /// query against via `HKQuery.predicateForObjects(withMetadataKey:
     /// allowedValues:)` for idempotent re-sync (architecture.md D4).
     public var externalUUID: String
-    /// `"fitbridge.externalID"` -- same value as `externalUUID`, duplicated
-    /// under FitBridge's own namespaced key per WP-07 step 4's literal spec.
+    /// `"healthloom.externalID"` -- same value as `externalUUID`, duplicated
+    /// under HealthLoom's own namespaced key per WP-07 step 4's literal spec.
     /// Kept as a distinct field (not derived from `externalUUID` at the call
     /// site) deliberately: `HKMetadataKeyExternalUUID` is the HealthKit-native
-    /// dedupe key; the `fitbridge.*` copy is FitBridge's own namespaced record
+    /// dedupe key; the `healthloom.*` copy is HealthLoom's own namespaced record
     /// of the same fact, robust to any future change in which HealthKit
     /// metadata key WP-08 dedupes against.
     public var externalID: String
-    /// `"fitbridge.sourceDevice"` -- `GoogleDataPoint.source.deviceDisplayName`,
+    /// `"healthloom.sourceDevice"` -- `GoogleDataPoint.source.deviceDisplayName`,
     /// or `nil` when Google didn't report a device name (the app renamed from
-    /// "bridge.*" to "fitbridge.*" -- see this file's header and
+    /// "bridge.*" to "healthloom.*" -- see this file's header and
     /// progress.md's WP-07 entry).
     public var sourceDevice: String?
 
@@ -326,8 +326,8 @@ public struct MappedNutritionCorrelation: Sendable, Hashable {
     /// sample too (each `MappedQuantitySample` carries its own copy) --
     /// WP-13's brief flags this as a choice to document: both the
     /// correlation *and* its constituents get the same
-    /// `HKMetadataKeyExternalUUID`/`fitbridge.externalID`/
-    /// `fitbridge.sourceDevice` (all derived from this one meal's
+    /// `HKMetadataKeyExternalUUID`/`healthloom.externalID`/
+    /// `healthloom.sourceDevice` (all derived from this one meal's
     /// `GoogleDataPoint.id`), because (1) `SyncEngine`'s existence-diff for
     /// this type queries only `HKObjectType.correlationType(forIdentifier:
     /// .food)` (the correlation itself is what D4's per-(type,window)

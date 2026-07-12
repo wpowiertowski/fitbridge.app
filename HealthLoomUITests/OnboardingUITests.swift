@@ -6,7 +6,7 @@
 // system alert) -> stubbed Google consent -> first sync -> dashboard shows
 // 4 types."
 //
-// `-UITestStubGoogle` (see FitBridgeApp/DI/LaunchConfiguration.swift) swaps
+// `-UITestStubGoogle` (see HealthLoomApp/DI/LaunchConfiguration.swift) swaps
 // in `StubGoogleConsentCoordinator` and `StubGoogleReconcileClient` so this
 // test never makes a real network call to Google. HealthKit permission is
 // *not* stubbed -- `HealthKitAuth.requestWrite` runs for real against the

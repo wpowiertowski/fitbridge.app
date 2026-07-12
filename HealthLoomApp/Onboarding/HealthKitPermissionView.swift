@@ -35,7 +35,7 @@ struct HealthKitPermissionView: View {
                 .foregroundStyle(.red)
             Text("Connect Apple Health")
                 .font(.title.bold())
-            Text("FitBridge needs permission to write your steps, heart rate, weight, and sleep data to Apple Health.")
+            Text("HealthLoom needs permission to write your steps, heart rate, weight, and sleep data to Apple Health.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

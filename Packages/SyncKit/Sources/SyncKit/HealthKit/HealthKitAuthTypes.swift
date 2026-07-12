@@ -4,14 +4,14 @@
 // write denied" error-posture row).
 //
 // Deliberately HealthKit-import-free: this file only imports CoreModel, so
-// FitBridge's own vocabulary for auth status/errors is usable from any code —
+// HealthLoom's own vocabulary for auth status/errors is usable from any code —
 // tests included — without pulling in HealthKit. Only `HealthKitAuth` and
 // `HealthKitObjectTypeResolver` (which actually touch `HK*` types) live behind
 // `#if canImport(HealthKit)`; see those files' headers for why.
 
 import CoreModel
 
-/// FitBridge's own per-type HealthKit **write** (share) authorization status,
+/// HealthLoom's own per-type HealthKit **write** (share) authorization status,
 /// decoupled from `HKAuthorizationStatus` so it can be referenced without
 /// importing HealthKit.
 ///

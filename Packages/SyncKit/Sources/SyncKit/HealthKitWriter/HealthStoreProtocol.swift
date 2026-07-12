@@ -59,7 +59,7 @@ public protocol HealthStoreProtocol: Sendable {
     /// the batch/page.
     func save(_ objects: [HKObject]) async throws(HealthKitWriterError)
 
-    /// The `fitbridge`-stamped external IDs (`HKMetadataKeyExternalUUID`,
+    /// The `healthloom`-stamped external IDs (`HKMetadataKeyExternalUUID`,
     /// architecture.md D4) of every sample of `sampleType` whose date range
     /// intersects `[start, end]`, collected with exactly **one** underlying
     /// query — never one query per sample, per D4's core invariant. Callers

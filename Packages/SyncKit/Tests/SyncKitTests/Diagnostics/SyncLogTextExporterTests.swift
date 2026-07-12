@@ -27,7 +27,7 @@ import Testing
         )
         let text = SyncLogTextExporter.export([older, newer], generatedAt: Date(timeIntervalSince1970: 3_000))
 
-        #expect(text.contains("FitBridge Sync Log Export"))
+        #expect(text.contains("HealthLoom Sync Log Export"))
         #expect(text.contains("Entries: 2"))
 
         let lines = text.components(separatedBy: "\n")

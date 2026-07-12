@@ -1,4 +1,4 @@
-# Implementation Plan — FitBridge (iOS 26 / Swift 6.2)
+# Implementation Plan — HealthLoom (iOS 26 / Swift 6.2)
 
 Executable, agent-ready work packages implementing [architecture.md](architecture.md),
 grounded in [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md).
@@ -78,7 +78,7 @@ idempotently, visible on a minimal dashboard.
 **Depends on:** nothing · **Touches:** repo root, all package manifests
 **Objective:** Compilable workspace with the module boundaries from architecture.md §2.
 **Steps:**
-1. New Xcode project → App → SwiftUI lifecycle → name `FitBridge`, deployment target iOS 26.
+1. New Xcode project → App → SwiftUI lifecycle → name `HealthLoom`, deployment target iOS 26.
 2. Create local packages `CoreModel`, `Secrets`, `GoogleHealthClient`, `SyncKit`,
    `CoachKit` under `Packages/`, each with a test target. Wire the dependency order from
    architecture.md §2 (SyncKit depends on CoreModel, Secrets, GoogleHealthClient; CoachKit
@@ -94,7 +94,7 @@ idempotently, visible on a minimal dashboard.
 4. App target: add **HealthKit** capability; **Background Modes** → background processing;
    Info.plist keys `NSHealthShareUsageDescription`, `NSHealthUpdateUsageDescription`
    (specific, honest strings — App Review reads them), `BGTaskSchedulerPermittedIdentifiers`
-   (`com.fitbridge.sync.refresh`), and the OAuth redirect URL scheme.
+   (`com.healthloom.sync.refresh`), and the OAuth redirect URL scheme.
 5. Set Strict Concurrency = Complete on all targets.
 6. CI: GitHub Actions workflow `ci.yml` — macOS runner, `swift test` per package +
    `xcodebuild build test` for the app scheme on an iOS 26 simulator. Cache SPM. CI must
@@ -252,8 +252,8 @@ covered by UI tests (test plan §5).
 4. Metadata on every sample (D4):
    ```swift
    [HKMetadataKeyExternalUUID: p.id,
-    "fitbridge.externalID": p.id,
-    "fitbridge.sourceDevice": p.source.deviceDisplayName]
+    "healthloom.externalID": p.id,
+    "healthloom.sourceDevice": p.source.deviceDisplayName]
    ```
 5. Unknown/unmapped `dataType` → `.skip` (never crash); ECG/AZM/IRN → `.localOnly`.
 **Done when:** golden-file tests pass for all four types.
@@ -322,7 +322,7 @@ timestamp, new ID) inside lookback gets written; concurrent `sync(type:)` calls 
    ("data reaches Google ~15 min after device sync" — set expectations, D-context §1).
 3. Wire `ModelContainer`, DI of engine/auth into the SwiftUI environment.
 **Done when (= P0 exit):** a real Fitbit Air/Pixel account's steps, HR, sleep, weight
-appear in Apple Health attributed to FitBridge, no duplicates after repeated manual
+appear in Apple Health attributed to HealthLoom, no duplicates after repeated manual
 syncs, and errors render rather than vanish.
 **Tests:** UI test — onboarding happy path with stubbed auth (launch argument
 `-UITestStubGoogle`); dashboard renders per-type states from a seeded in-memory container.
@@ -438,14 +438,14 @@ overlapping incremental sync.
 ### WP-16 · Background sync
 **Depends on:** WP-09 · **Touches:** app target, `SyncKit`
 **Steps:**
-1. Register `BGAppRefreshTask` (`com.fitbridge.sync.refresh`) at launch; schedule next
+1. Register `BGAppRefreshTask` (`com.healthloom.sync.refresh`) at launch; schedule next
    on every run and in the handler (always reschedule, even on failure).
 2. Handler: run `syncAll` for due types with a hard time budget (~20 s: check
    `task.expirationHandler`, cancel gracefully, cursors make partial runs safe).
 3. Optionally a `BGProcessingTask` for backfill chunks (requiresExternalPower = false,
    network = true).
 **Tests:** unit-test the "due types + budget" planner as a pure function; manual:
-`e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.fitbridge.sync.refresh"]`
+`e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.healthloom.sync.refresh"]`
 in lldb; verify reschedule-on-every-path via debug log.
 
 ### WP-17 · Sync settings + incremental scopes
@@ -656,7 +656,7 @@ provider capture) lacks it; correction persists across refresh; forget clears.
 
 ### WP-33 · Today view — Yacht club design
 **Depends on:** WP-10, WP-23 (readiness) · can start visual work right after WP-10.
-**Inputs:** `Design/FitBridgeTodayView-YachtClub.swift`, `Design/fitbridge-final-yachtclub.html` (the spec).
+**Inputs:** `Design/HealthLoomTodayView-YachtClub.swift`, `Design/healthloom-final-yachtclub.html` (the spec).
 **Steps:**
 1. Port `Theme` tokens + `TickScale` + panel components into the app target, bound to
    real data: readiness hero ← `ReadinessEngine` (incl. "based on N of 4 signals" state),
@@ -715,7 +715,7 @@ sync memory profile on a 1-year backfill (Instruments — no unbounded page accu
       Google account, HK denied, offline.
 - [ ] Built only on Google Health API (Fitbit Web API sunsets Sept 2026 — no legacy calls;
       grep CI guard for `api.fitbit.com`).
-- [ ] Display name **FitBridge** consistent across Info.plist, App Store Connect, and
+- [ ] Display name **HealthLoom** consistent across Info.plist, App Store Connect, and
       HealthKit source attribution.
 - [ ] Dual-wear verification executed on a real Apple Watch + Fitbit Air day
       (test plan §7 manual scripts).

@@ -1,4 +1,4 @@
-# Architecture — FitBridge
+# Architecture — HealthLoom
 
 iOS app that syncs Fitbit / Fitbit Air / Pixel Watch data from the **Google Health API**
 into **Apple HealthKit**, and layers a user-controlled **AI coach** on top (on-device
@@ -7,7 +7,7 @@ Apple Foundation Models by default; Claude / OpenAI / Gemini as opt-in cloud pro
 **Target user & wear pattern:** the core user wears a **Fitbit (Air) 24/7** for baseline
 data (sleep, overnight HRV/SpO₂, resting HR, all-day steps) and puts on an **Apple Watch
 for dedicated activities** (running, swimming, cycling, …). Apple Watch records natively
-into HealthKit with higher fidelity — explicit start/stop, GPS, dense HR. FitBridge's job
+into HealthKit with higher fidelity — explicit start/stop, GPS, dense HR. HealthLoom's job
 is therefore twofold: import the Fitbit 24/7 baseline into Apple Health, and **consolidate
 overlapping activity data with Apple Watch as the priority source** (see D13).
 
@@ -15,10 +15,10 @@ Companion docs:
 - [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md) — API facts and the type-mapping table (source of truth for data types).
 - [implementation-plan.md](implementation-plan.md) — phased work packages implementing this architecture.
 - [test-plan.md](test-plan.md) — unit/integration/UI/manual testing strategy.
-- [Design/fitbridge-final-yachtclub.html](Design/fitbridge-final-yachtclub.html), [Design/FitBridgeTodayView-YachtClub.swift](Design/FitBridgeTodayView-YachtClub.swift) — final "Today" screen design (Yacht club palette).
+- [Design/healthloom-final-yachtclub.html](Design/healthloom-final-yachtclub.html), [Design/HealthLoomTodayView-YachtClub.swift](Design/HealthLoomTodayView-YachtClub.swift) — final "Today" screen design (Yacht club palette).
 
-**Naming:** the product, app target, and module prefix are all **FitBridge**
-(`FitBridge` target, `fitbridge.*` metadata keys, `com.fitbridge.*` identifiers).
+**Naming:** the product, app target, and module prefix are all **HealthLoom**
+(`HealthLoom` target, `healthloom.*` metadata keys, `com.healthloom.*` identifiers).
 
 ---
 
@@ -32,7 +32,7 @@ Companion docs:
                                                                  │ OAuth 2.0 + PKCE, reconcile reads
                                                                  ▼
                                                     ┌───────────────────────────┐
-                                                    │  FitBridge (this app)     │
+                                                    │  HealthLoom (this app)     │
                                                     │  SyncEngine → TypeMapper  │
                                                     │  → ConflictResolver       │
                                                     │  → HealthKitWriter        │
@@ -66,7 +66,7 @@ Local Swift packages, dependency-ordered (each depends only on packages above it
 | `GoogleHealthClient` | OAuth (PKCE) + typed REST client for `health.googleapis.com/v4/`. | `actor GoogleAuthManager`, `GoogleHealthClient`, `GoogleDataPoint` |
 | `SyncKit` | Pull → map → resolve conflicts → write pipeline + scheduling. | `TypeMapper`, `WatchCoverageIndex`, `ConflictResolver`, `HealthKitWriter`, `actor SyncEngine`, `BackfillCoordinator`, `SyncScheduler` |
 | `CoachKit` | Provider abstraction, prompt/knowledge/context layers, readiness. | `CoachProvider`, `ProviderRegistry`, `PromptManager`, `KnowledgeStore`, `ContextAssembler`, `ReadinessEngine`, `CoachOrchestrator` |
-| App target `FitBridge` | SwiftUI screens, app lifecycle, DI wiring, BGTask registration. | `TodayView`, `ActivitiesView`, `CoachView`, `YouView`, `SettingsView`, onboarding |
+| App target `HealthLoom` | SwiftUI screens, app lifecycle, DI wiring, BGTask registration. | `TodayView`, `ActivitiesView`, `CoachView`, `YouView`, `SettingsView`, onboarding |
 
 Rules:
 - Packages never import each other sideways (`SyncKit` doesn't know `CoachKit` exists).
@@ -109,7 +109,7 @@ high-water mark would silently drop any sample synced late by the device.
 
 **D4 — Idempotency via external ID metadata.**
 Every HealthKit sample is stamped with `HKMetadataKeyExternalUUID` = Google data-point ID
-plus `fitbridge.sourceDevice`. Re-sync skips existing IDs; "update" = delete-by-external-ID +
+plus `healthloom.sourceDevice`. Re-sync skips existing IDs; "update" = delete-by-external-ID +
 re-insert (HK samples are immutable); "disconnect & wipe" = delete-by-source.
 Existence checks are **batched**: one HK query per (type, time window) collects present
 external IDs into a `Set`, then the page is diffed in memory — never one query per sample.

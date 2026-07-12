@@ -49,7 +49,7 @@ import Testing
             start: start,
             end: end,
             metadata: stampExternalID
-                ? [HKMetadataKeyExternalUUID: externalID, "fitbridge.externalID": externalID]
+                ? [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
                 : nil
         )
     }
@@ -64,7 +64,7 @@ import Testing
             quantity: HKQuantity(unit: HKUnit.count().unitDivided(by: .minute()), doubleValue: 60),
             start: start,
             end: end,
-            metadata: [HKMetadataKeyExternalUUID: externalID, "fitbridge.externalID": externalID]
+            metadata: [HKMetadataKeyExternalUUID: externalID, "healthloom.externalID": externalID]
         )
     }
 
@@ -247,7 +247,7 @@ import Testing
         mock.seed(Self.stepsSample(externalID: "app-1"), isAppWritten: true)
         mock.seed(Self.stepsSample(externalID: "app-2"), isAppWritten: true)
         // Simulates a sample some other app (or Apple Health natively) wrote:
-        // no fitbridge metadata, and -- crucially -- `isAppWritten: false`,
+        // no healthloom metadata, and -- crucially -- `isAppWritten: false`,
         // which is the only lever a test has to fake HKSource attribution
         // (see MockHealthStore.swift's header for why).
         mock.seed(Self.stepsSample(externalID: "not-ours", stampExternalID: false), isAppWritten: false)

@@ -1,7 +1,7 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// Secrets: Keychain wrapper. No dependencies on other FitBridge packages.
+// Secrets: Keychain wrapper. No dependencies on other HealthLoom packages.
 // See architecture.md §2 (module map) and §3 (concurrency model).
 
 let package = Package(

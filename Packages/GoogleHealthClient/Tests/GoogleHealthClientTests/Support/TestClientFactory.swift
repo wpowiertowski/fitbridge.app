@@ -12,8 +12,8 @@ import Foundation
 nonisolated enum TestClientFactory {
     static let authConfig = GoogleAuthConfig(
         clientID: "test-client-id.apps.googleusercontent.com",
-        redirectURI: "com.fitbridge.app:/oauth2redirect",
-        redirectURIScheme: "com.fitbridge.app"
+        redirectURI: "com.healthloom.app:/oauth2redirect",
+        redirectURIScheme: "com.healthloom.app"
     )
 
     /// A client that must never actually send a request -- for pure decode/

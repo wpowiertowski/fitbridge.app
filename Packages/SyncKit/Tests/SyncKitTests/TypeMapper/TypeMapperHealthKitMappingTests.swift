@@ -32,8 +32,8 @@ import Testing
         #expect(hkSample.startDate == TypeMapperFixtures.date("2026-07-01T00:00:00Z"))
         #expect(hkSample.endDate == TypeMapperFixtures.date("2026-07-01T01:00:00Z"))
         #expect(hkSample.metadata?[HKMetadataKeyExternalUUID] as? String == "steps-0001")
-        #expect(hkSample.metadata?["fitbridge.externalID"] as? String == "steps-0001")
-        #expect(hkSample.metadata?["fitbridge.sourceDevice"] as? String == "Fitbit Air")
+        #expect(hkSample.metadata?["healthloom.externalID"] as? String == "steps-0001")
+        #expect(hkSample.metadata?["healthloom.sourceDevice"] as? String == "Fitbit Air")
     }
 
     @Test func heartRateMapsToRealQuantitySample() {
@@ -55,7 +55,7 @@ import Testing
         }
         #expect(hkSample.quantityType == HKObjectType.quantityType(forIdentifier: .bodyMass))
         #expect(hkSample.quantity == HKQuantity(unit: .gramUnit(with: .kilo), doubleValue: 70.5))
-        #expect(hkSample.metadata?["fitbridge.sourceDevice"] as? String == "Fitbit Aria Air")
+        #expect(hkSample.metadata?["healthloom.sourceDevice"] as? String == "Fitbit Aria Air")
     }
 
     @Test func sleepMapsToRealCategorySamples() {
@@ -345,8 +345,8 @@ import Testing
         #expect(correlation.endDate == TypeMapperFixtures.date("2026-07-01T12:15:00Z"))
         #expect(correlation.objects.count == 4)
         #expect(correlation.metadata?[HKMetadataKeyExternalUUID] as? String == "nutrition-0001")
-        #expect(correlation.metadata?["fitbridge.externalID"] as? String == "nutrition-0001")
-        #expect(correlation.metadata?["fitbridge.sourceDevice"] as? String == "Fitbit Air")
+        #expect(correlation.metadata?["healthloom.externalID"] as? String == "nutrition-0001")
+        #expect(correlation.metadata?["healthloom.sourceDevice"] as? String == "Fitbit Air")
 
         let quantitySamples = correlation.objects.compactMap { $0 as? HKQuantitySample }
         #expect(quantitySamples.count == 4)

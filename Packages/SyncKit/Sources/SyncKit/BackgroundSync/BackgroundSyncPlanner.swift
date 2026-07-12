@@ -133,7 +133,7 @@ nonisolated public struct BackgroundSyncBudget: Sendable, Equatable {
 
 /// Bundles this file's tunable constants in one place, the same way
 /// `SyncConfiguration` (SyncEngineTypes.swift) centralizes `SyncEngine`'s own
-/// window sizing -- so `FitBridgeApp.swift`'s BGTask handler references one
+/// window sizing -- so `HealthLoomApp.swift`'s BGTask handler references one
 /// documented default instead of re-declaring magic numbers at the call
 /// site.
 nonisolated public struct BackgroundSyncConfiguration: Sendable, Equatable {
@@ -166,7 +166,7 @@ nonisolated public struct BackgroundSyncConfiguration: Sendable, Equatable {
 /// WP-16 step 1's explicit, twice-stated requirement: "schedule next [BG
 /// task occurrence] on every run and in the handler (always reschedule,
 /// even on failure)". This package never imports `BackgroundTasks` (only
-/// the app target does -- see `FitBridgeApp.swift`'s header), so the actual
+/// the app target does -- see `HealthLoomApp.swift`'s header), so the actual
 /// `BGTaskScheduler.shared.submit(_:)` call can't be unit-tested here; what
 /// *can* be pinned here, and regression-tested without any BGTaskScheduler
 /// dependency, is the underlying reason the app target's handler reschedules

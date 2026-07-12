@@ -1,14 +1,14 @@
 // GoogleDataType.swift
 // CoreModel
 //
-// Shared vocabulary for every Google Health API data type FitBridge knows about.
+// Shared vocabulary for every Google Health API data type HealthLoom knows about.
 // Source of truth: google-health-healthkit-base-knowledge.md §3 (full data-type table)
 // and §5 (Google → HealthKit write-target mapping).
 //
 // This file must never import HealthKit (architecture.md §2, §4 D2) — HealthKit
 // identifiers are carried as plain strings via `GoogleDataType.Writability.healthKit`.
 
-/// Every Google Health API data type FitBridge is aware of (base-knowledge §3).
+/// Every Google Health API data type HealthLoom is aware of (base-knowledge §3).
 ///
 /// The raw value is the **snake_case filter identifier** used in Google Health API query
 /// filters (base-knowledge §2, e.g. `body_fat`); `endpointName` derives the **kebab-case**

@@ -17,7 +17,7 @@ nonisolated public enum GoogleOAuthScope {
     }
 
     /// The `{scope}` fragment from base-knowledge §2's URL template, per
-    /// `GoogleDataType.Scope` case. FitBridge only ever reads (architecture.md
+    /// `GoogleDataType.Scope` case. HealthLoom only ever reads (architecture.md
     /// D1/D2 -- Google is a read-only upstream for this app), so `.readonly`
     /// is the only access kind actually requested; `.writeonly` is modeled
     /// for completeness/documentation.

@@ -25,8 +25,8 @@ private actor CallCounter {
 struct GoogleAuthManagerTests {
     static let testConfig = GoogleAuthConfig(
         clientID: "test-client-id.apps.googleusercontent.com",
-        redirectURI: "com.fitbridge.app:/oauth2redirect",
-        redirectURIScheme: "com.fitbridge.app"
+        redirectURI: "com.healthloom.app:/oauth2redirect",
+        redirectURIScheme: "com.healthloom.app"
     )
 
     nonisolated private static func tokenResponseJSON(
@@ -68,7 +68,7 @@ struct GoogleAuthManagerTests {
             tokenStore: FakeTokenStore()
         )
         let request = manager.buildTokenRequest(
-            .authorizationCode(code: "auth-code-1", verifier: "verifier-1", redirectURI: "com.fitbridge.app:/oauth2redirect")
+            .authorizationCode(code: "auth-code-1", verifier: "verifier-1", redirectURI: "com.healthloom.app:/oauth2redirect")
         )
 
         #expect(request.httpMethod == "POST")
@@ -81,7 +81,7 @@ struct GoogleAuthManagerTests {
             "code": "auth-code-1",
             "code_verifier": "verifier-1",
             "grant_type": "authorization_code",
-            "redirect_uri": "com.fitbridge.app:/oauth2redirect",
+            "redirect_uri": "com.healthloom.app:/oauth2redirect",
         ])
     }
 
@@ -287,7 +287,7 @@ struct GoogleAuthManagerTests {
         }
 
         // Redirect-extraction failure path: state mismatch, code present in URL.
-        let redirect = URL(string: "com.fitbridge.app:/oauth2redirect?code=\(secretCode)&state=wrong")!
+        let redirect = URL(string: "com.healthloom.app:/oauth2redirect?code=\(secretCode)&state=wrong")!
         let extracted = GoogleAuthManager.extractAuthorizationCode(from: redirect, expectedState: "expected")
         #expect(extracted == nil)
     }

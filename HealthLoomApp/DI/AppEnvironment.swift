@@ -5,7 +5,7 @@
 // `GoogleAuthManager` into one dependency-injection root, held in the
 // SwiftUI environment (architecture.md §2's app-target row: "DI wiring").
 // `@Observable` (not `ObservableObject`) per this app target's iOS
-// 26/Swift 6.2 conventions -- `FitBridgeApp` injects one instance via
+// 26/Swift 6.2 conventions -- `HealthLoomApp` injects one instance via
 // `.environment(_:)`; every screen reads it back via
 // `@Environment(AppEnvironment.self)`.
 //
@@ -65,7 +65,7 @@ final class AppEnvironment {
     /// WP-15 (implementation-plan.md): every type the historical-backfill
     /// walk covers -- deliberately the broad P1 set (every `GoogleDataType`
     /// with an actual write destination), not just `p0Types`, mirroring
-    /// `FitBridgeApp.swift`'s own `syncableTypes` derivation for WP-16's
+    /// `HealthLoomApp.swift`'s own `syncableTypes` derivation for WP-16's
     /// background sync (`GoogleDataType.allCases.filter { $0.writability !=
     /// .skip }`) -- kept as its own constant here (rather than importing
     /// that file's private list, which this WP's scope doesn't touch
@@ -105,10 +105,10 @@ final class AppEnvironment {
     /// to `SyncEngine.swift` (an optional `runRecorder:` parameter,
     /// defaulting to `nil` -- see that file's doc comment), since every
     /// other production consumer of `SyncEngine` (`syncEngine.sync(type:)`/
-    /// `.syncAll(types:)` from `DashboardView`, `FitBridgeApp`'s background
+    /// `.syncAll(types:)` from `DashboardView`, `HealthLoomApp`'s background
     /// handler) is either out of this WP's scope or fenced off entirely.
     /// `SyncLogStore()`'s default `FileSyncLogPersistence` persists under
-    /// `Application Support/FitBridge/SyncLog.json` (a sibling of
+    /// `Application Support/HealthLoom/SyncLog.json` (a sibling of
     /// `CoreModel.store`, never inside its schema -- see
     /// `SyncLogPersistence.swift`'s header for why a second SwiftData model
     /// wasn't used instead).
@@ -140,8 +140,8 @@ final class AppEnvironment {
             // untestable until that lands; this wiring is otherwise complete
             // and matches `project.yml`'s placeholder `CFBundleURLSchemes`.
             clientID: "GOOGLE_IOS_CLIENT_ID_PENDING_P-1.3",
-            redirectURI: "com.fitbridge.app:/oauth2redirect",
-            redirectURIScheme: "com.fitbridge.app"
+            redirectURI: "com.healthloom.app:/oauth2redirect",
+            redirectURIScheme: "com.healthloom.app"
         )
         let authManager = GoogleAuthManager(
             config: authConfig,

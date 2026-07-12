@@ -2,7 +2,7 @@
 //
 // WP-10 (implementation-plan.md step 1): the explicit HealthKit-unavailable
 // state ("HKHealthStore.isHealthDataAvailable() false, e.g. iPad"). A
-// terminal, informational screen -- FitBridge's entire premise is writing
+// terminal, informational screen -- HealthLoom's entire premise is writing
 // into Apple Health, so there is no meaningful "continue anyway" path.
 // `project.yml` restricts P0's `TARGETED_DEVICE_FAMILY` to iPhone only, so
 // this state is not reachable from the App Store build today, but the
@@ -20,7 +20,7 @@ struct HealthKitUnavailableView: View {
                 .foregroundStyle(.red)
             Text("Apple Health Isn't Available")
                 .font(.title.bold())
-            Text("This device doesn't support Apple Health, so FitBridge can't import your Fitbit or Pixel Watch data here. Try FitBridge on a compatible iPhone.")
+            Text("This device doesn't support Apple Health, so HealthLoom can't import your Fitbit or Pixel Watch data here. Try HealthLoom on a compatible iPhone.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

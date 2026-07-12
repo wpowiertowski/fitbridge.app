@@ -17,10 +17,10 @@ import Testing
 /// Attempts a real add+delete cycle on a disposable Keychain item to decide
 /// whether the real Keychain is usable in this process at all. Uses its own
 /// throwaway service name (distinct from both production
-/// `"com.fitbridge.secrets"` and the test service below) purely as a probe,
+/// `"com.healthloom.secrets"` and the test service below) purely as a probe,
 /// so it can never interact with a real secret.
 nonisolated private func isRealKeychainUsable() -> Bool {
-    let backend = KeychainSecurityBackend(service: "com.fitbridge.secrets.integration-test-probe")
+    let backend = KeychainSecurityBackend(service: "com.healthloom.secrets.integration-test-probe")
     do {
         try backend.write(account: "__probe__", value: "probe")
         try backend.erase(account: "__probe__")
@@ -32,10 +32,10 @@ nonisolated private func isRealKeychainUsable() -> Bool {
 
 @Suite("KeychainStore against the real Keychain (integration)")
 struct KeychainSecurityBackendTests {
-    // Distinct from the production service name ("com.fitbridge.secrets") so
+    // Distinct from the production service name ("com.healthloom.secrets") so
     // this suite can never read, overwrite, or delete a secret a real app
     // run left behind on this machine.
-    private static let testService = "com.fitbridge.secrets.integration-test"
+    private static let testService = "com.healthloom.secrets.integration-test"
 
     private func makeStore() -> KeychainStore {
         KeychainStore(backend: KeychainSecurityBackend(service: Self.testService))

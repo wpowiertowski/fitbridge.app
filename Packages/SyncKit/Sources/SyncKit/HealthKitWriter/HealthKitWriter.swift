@@ -63,7 +63,7 @@ public final class HealthKitWriter: Sendable {
         )
     }
 
-    /// Batched existence check (architecture.md D4): the `fitbridge`-stamped
+    /// Batched existence check (architecture.md D4): the `healthloom`-stamped
     /// external IDs already present in HealthKit for `type` within
     /// `[start, end]`, in exactly one underlying query — see
     /// `HealthStoreProtocol.existingExternalIDs(ofType:start:end:)`'s doc

@@ -124,8 +124,8 @@ public protocol BackfillHorizonRecordStore: Sendable {
 }
 
 /// Production store: one `UserDefaults` key per type, namespaced under
-/// `com.fitbridge.backfill.completedHorizon.*` (mirrors this app's existing
-/// `com.fitbridge.*` identifier convention, architecture.md's naming
+/// `com.healthloom.backfill.completedHorizon.*` (mirrors this app's existing
+/// `com.healthloom.*` identifier convention, architecture.md's naming
 /// section).
 /// `@unchecked Sendable`: `UserDefaults` doesn't declare `Sendable` itself,
 /// but it is Apple-documented as thread-safe for exactly this get/set-by-key
@@ -139,7 +139,7 @@ nonisolated public final class UserDefaultsBackfillHorizonRecordStore: BackfillH
     }
 
     private func key(for type: GoogleDataType) -> String {
-        "com.fitbridge.backfill.completedHorizon.\(type.rawValue)"
+        "com.healthloom.backfill.completedHorizon.\(type.rawValue)"
     }
 
     public func completedHorizon(for type: GoogleDataType) -> BackfillHorizon? {

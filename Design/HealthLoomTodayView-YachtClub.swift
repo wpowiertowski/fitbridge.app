@@ -1,6 +1,6 @@
 //
-//  FitBridgeTodayView.swift
-//  FitBridge — "Today" view (FINAL — Yacht club palette)
+//  HealthLoomTodayView.swift
+//  HealthLoom — "Today" view (FINAL — Yacht club palette)
 //
 //  Palette source: Figma "Yacht club" — #F2F0EF / #BBBDBC / #245F73 / #733E24
 //  Mapping: deep teal (#245F73) serves as ink — primary text and headings —
@@ -98,7 +98,7 @@ private struct Header: View {
         HStack {
             HStack(spacing: 8) {
                 Rectangle().fill(Theme.accent).frame(width: 6, height: 6)
-                Text("fitbridge").font(.helv(16, .medium)).foregroundStyle(Theme.ink)
+                Text("healthloom").font(.helv(16, .medium)).foregroundStyle(Theme.ink)
             }
             Spacer()
             HStack(spacing: 7) {
@@ -232,7 +232,7 @@ private struct TabBar: View {
 
 // MARK: - Main
 
-struct FitBridgeTodayView: View {
+struct HealthLoomTodayView: View {
     @State private var editing = false
     @State private var tab = 0
     private let metrics = Metric.sample
@@ -279,5 +279,5 @@ struct FitBridgeTodayView: View {
 }
 
 #Preview {
-    FitBridgeTodayView()
+    HealthLoomTodayView()
 }

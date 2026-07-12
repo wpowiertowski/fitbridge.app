@@ -37,7 +37,7 @@ nonisolated public enum PKCE {
     }
 
     /// `code_challenge = BASE64URL-ENCODE(SHA256(ASCII(code_verifier)))`
-    /// (RFC 7636 §4.2, transform "S256"). FitBridge only ever uses S256 (the
+    /// (RFC 7636 §4.2, transform "S256"). HealthLoom only ever uses S256 (the
     /// spec permits a "plain" method too, but every OAuth provider worth
     /// using -- Google included -- requires S256).
     public static func codeChallenge(for verifier: String) -> String {

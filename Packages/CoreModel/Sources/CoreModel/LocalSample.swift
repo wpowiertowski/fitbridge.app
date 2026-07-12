@@ -1,7 +1,7 @@
 // LocalSample.swift
 // CoreModel
 //
-// The ONLY local mirror of health data FitBridge keeps — and only for types HealthKit
+// The ONLY local mirror of health data HealthLoom keeps — and only for types HealthKit
 // cannot accept a write for (architecture.md D2: ECG, Active Zone Minutes, Active
 // Minutes, Irregular Rhythm Notifications — i.e. `GoogleDataType.writability == .localOnly`).
 // Everything HealthKit-writable flows straight through to HealthKit; CoreModel never

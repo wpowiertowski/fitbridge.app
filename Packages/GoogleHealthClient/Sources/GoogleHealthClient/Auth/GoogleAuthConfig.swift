@@ -15,7 +15,7 @@ nonisolated public struct GoogleAuthConfig: Sendable {
     /// Redirect URI registered with the OAuth client. Google's guidance for
     /// iOS installed-app clients is the reversed-client-ID custom scheme
     /// (e.g. `com.googleusercontent.apps.XXXX:/oauth2redirect`); WP-01 left a
-    /// placeholder scheme (`com.fitbridge.app`) pending the real client
+    /// placeholder scheme (`com.healthloom.app`) pending the real client
     /// (progress.md WP-01 note (4)). Keep `redirectURI` and
     /// `redirectURIScheme` reconciled with whatever the real client issues.
     public var redirectURI: String

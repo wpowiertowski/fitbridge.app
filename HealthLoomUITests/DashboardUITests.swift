@@ -2,7 +2,7 @@
 //
 // WP-10 (implementation-plan.md): "dashboard renders per-type states from a
 // seeded in-memory container." `-UITestSeedData` (see
-// FitBridgeApp/DI/LaunchConfiguration.swift) skips onboarding entirely and
+// HealthLoomApp/DI/LaunchConfiguration.swift) skips onboarding entirely and
 // seeds an in-memory `CoreModel.makeContainer(inMemory: true)` with
 // `SyncState` rows spanning ok / error / idle-never-synced
 // (`AppEnvironment.seedDashboardFixtures`) before the first frame renders --

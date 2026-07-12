@@ -12,7 +12,7 @@ import CoreModel
 import HealthKit
 
 /// Wraps a single shared `HKHealthStore` and mediates every HealthKit
-/// read/write authorization request FitBridge makes (architecture.md §2:
+/// read/write authorization request HealthLoom makes (architecture.md §2:
 /// SyncKit; implementation-plan.md WP-06).
 ///
 /// The app should construct exactly **one** `HealthKitAuth` and share it

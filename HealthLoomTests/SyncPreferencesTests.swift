@@ -3,7 +3,7 @@
 // WP-17 (implementation-plan.md) "Tests" line: "scope-computation from
 // toggle set (pure function); disabled type skipped by `syncAll`." Both
 // targets are pure static functions on `SyncPreferences`
-// (`FitBridgeApp/Settings/SyncPreferences.swift`) -- tested here directly,
+// (`HealthLoomApp/Settings/SyncPreferences.swift`) -- tested here directly,
 // with no `UserDefaults` involved at all. A second group of tests covers the
 // `UserDefaults`-backed instance API itself, using a throwaway
 // `UserDefaults(suiteName:)` per test so nothing here ever touches
@@ -11,7 +11,7 @@
 
 import Testing
 import Foundation
-@testable import FitBridge
+@testable import HealthLoom
 import CoreModel
 
 @Suite("SyncPreferences - pure functions")
@@ -102,7 +102,7 @@ struct SyncPreferencesInstanceTests {
     /// lifecycle assumptions) so cleanup ordering is explicit and never
     /// depends on when Swift deallocates a class instance.
     private func makeEphemeralDefaults() -> (defaults: UserDefaults, cleanup: () -> Void) {
-        let suiteName = "com.fitbridge.tests.syncPreferences.\(UUID().uuidString)"
+        let suiteName = "com.healthloom.tests.syncPreferences.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         return (defaults, { defaults.removePersistentDomain(forName: suiteName) })
     }

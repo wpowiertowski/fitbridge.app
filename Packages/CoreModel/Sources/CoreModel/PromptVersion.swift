@@ -16,7 +16,7 @@ public final class PromptVersion {
 
     public var createdAt: Date
 
-    /// Whether this version is FitBridge's shipped default (vs. a user edit/history
+    /// Whether this version is HealthLoom's shipped default (vs. a user edit/history
     /// entry) — lets the Prompt Editor's "reset to default" and diff-vs-default
     /// (WP-26) find the baseline without hardcoding it twice.
     public var isDefault: Bool

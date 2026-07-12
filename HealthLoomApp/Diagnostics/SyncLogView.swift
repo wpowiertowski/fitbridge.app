@@ -58,7 +58,7 @@ struct SyncLogView: View {
         .navigationTitle("Sync Log")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                ShareLink(item: exportText, preview: SharePreview("FitBridge Sync Log")) {
+                ShareLink(item: exportText, preview: SharePreview("HealthLoom Sync Log")) {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
                 .accessibilityIdentifier("synclog.export")

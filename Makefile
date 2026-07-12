@@ -2,7 +2,7 @@
 
 xcode:
 	xcodegen generate
-	open FitBridge.xcodeproj
+	open HealthLoom.xcodeproj
 
 test:
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
@@ -10,15 +10,15 @@ test:
 		(cd Packages/$$pkg && swift test -Xswiftc -warnings-as-errors) || exit 1; \
 	done
 	xcodegen generate
-	xcodebuild build -project FitBridge.xcodeproj -scheme FitBridge -destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO
+	xcodebuild build -project HealthLoom.xcodeproj -scheme HealthLoom -destination "generic/platform=iOS Simulator" CODE_SIGNING_ALLOWED=NO
 
 clean:
-	rm -rf FitBridge.xcodeproj
-	rm -rf ~/Library/Developer/Xcode/DerivedData/FitBridge-*
+	rm -rf HealthLoom.xcodeproj
+	rm -rf ~/Library/Developer/Xcode/DerivedData/HealthLoom-*
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
 		(cd Packages/$$pkg && swift package clean); \
 	done
-	xcrun simctl uninstall booted com.fitbridge.app 2>/dev/null || true
+	xcrun simctl uninstall booted com.healthloom.app 2>/dev/null || true
 
 prune-branches:
 	@git fetch --prune origin

@@ -4,7 +4,7 @@
 // plain-text dump suitable for user support -- counts and types only, never
 // values." Pure, testable formatting kept in SyncKit (not the app target)
 // so the exact text shape has package-level golden tests, and so the app's
-// `SyncLogView`/share-sheet button (FitBridgeApp/Diagnostics/) is a thin,
+// `SyncLogView`/share-sheet button (HealthLoomApp/Diagnostics/) is a thin,
 // untestable-by-nature SwiftUI wrapper around one already-verified
 // function.
 import Foundation
@@ -21,7 +21,7 @@ nonisolated public enum SyncLogTextExporter {
     public static func export(_ entries: [SyncLogEntry], generatedAt: Date = Date()) -> String {
         let sorted = entries.sorted { $0.timestamp > $1.timestamp }
         var lines = [
-            "FitBridge Sync Log Export",
+            "HealthLoom Sync Log Export",
             "Generated: \(iso8601.string(from: generatedAt))",
             "Entries: \(sorted.count)",
             "",

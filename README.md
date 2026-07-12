@@ -1,4 +1,4 @@
-[![Build](https://github.com/wpowiertowski/fitbridge.app/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wpowiertowski/fitbridge.app/actions?query=branch%3Amain)
+[![Build](https://github.com/wpowiertowski/healthloom.app/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/wpowiertowski/healthloom.app/actions?query=branch%3Amain)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Swift 6.0](https://img.shields.io/badge/swift-6.0-F05138.svg)](https://swift.org)
 [![iOS 26](https://img.shields.io/badge/iOS-26-000000.svg)](https://developer.apple.com/ios/)
@@ -6,7 +6,7 @@
 [![SwiftData](https://img.shields.io/badge/SwiftData-blue.svg)](https://developer.apple.com/swiftdata/)
 [![HealthKit](https://img.shields.io/badge/HealthKit-blue.svg)](https://developer.apple.com/healthkit/)
 
-# FitBridge
+# HealthLoom
 
 Fitbit (and Fitbit Air) data, synced into Apple Health — with an AI coach you control.
 
@@ -14,14 +14,14 @@ Fitbit (and Fitbit Air) data, synced into Apple Health — with an AI coach you 
 
 ## Overview
 
-FitBridge is a native iOS app that syncs Fitbit / Fitbit Air / Pixel Watch data from the
+HealthLoom is a native iOS app that syncs Fitbit / Fitbit Air / Pixel Watch data from the
 **Google Health API** into **Apple HealthKit**, so your health data lives in one place
 even if your wearable isn't from Apple. It's built for the dual-wear user: a Fitbit worn
 24/7 for baseline data (sleep, overnight HRV/SpO₂, resting HR, all-day steps) and an Apple
-Watch worn for dedicated activities — FitBridge consolidates the two instead of double
+Watch worn for dedicated activities — HealthLoom consolidates the two instead of double
 counting.
 
-On top of that data, FitBridge layers a **user-controlled AI coach**: on-device Apple
+On top of that data, HealthLoom layers a **user-controlled AI coach**: on-device Apple
 Foundation Models by default, with Claude, OpenAI, and Gemini available as opt-in cloud
 providers. You write the system prompt; a non-editable safety suffix keeps clinical
 topics pointed at an actual clinician.
@@ -70,7 +70,7 @@ Architected, not yet built (see [Open Questions](#status--roadmap) below):
                                                                  │ OAuth 2.0 + PKCE, reconcile reads
                                                                  ▼
                                                     ┌───────────────────────────┐
-                                                    │  FitBridge (this app)     │
+                                                    │  HealthLoom (this app)     │
                                                     │  SyncEngine → TypeMapper  │
                                                     │  → ConflictResolver       │
                                                     │  → HealthKitWriter        │
@@ -87,7 +87,7 @@ lives in [architecture.md](architecture.md).
 ## Project Structure
 
 ```text
-FitBridgeApp/           SwiftUI app target — screens, DI wiring, BGTask registration
+HealthLoomApp/           SwiftUI app target — screens, DI wiring, BGTask registration
 ├── Onboarding/          Welcome → Google consent → HealthKit permission → first sync
 ├── Dashboard/           Per-type sync status
 ├── Backfill/            Historical backfill range picker + per-type progress
@@ -99,24 +99,24 @@ Packages/                Local Swift packages, dependency-ordered (architecture.
 ├── GoogleHealthClient/   OAuth (PKCE) + typed v4 REST client
 ├── SyncKit/              Pull → map → resolve conflicts → write pipeline + scheduling
 └── CoachKit/              Provider abstraction, prompt/knowledge/context layers (placeholder)
-FitBridgeTests/          Unit tests hosted in the app target (@testable import FitBridge)
-FitBridgeUITests/        XCUITest — onboarding + dashboard flows
+HealthLoomTests/          Unit tests hosted in the app target (@testable import HealthLoom)
+HealthLoomUITests/        XCUITest — onboarding + dashboard flows
 Design/                  Yacht club design system reference (HTML + SwiftUI mockups)
 ```
 
 ## Testing
 
 CI runs a per-package `swift test -Xswiftc -warnings-as-errors` matrix, then generates
-the Xcode project via `xcodegen` and runs `xcodebuild build test` for the `FitBridge`
+the Xcode project via `xcodegen` and runs `xcodebuild build test` for the `HealthLoom`
 scheme on an iOS Simulator — warnings fail the build in both stages. `make test` runs
 the same package-by-package `swift test` + build locally; `make xcode` regenerates and
 opens the project.
 
 ```bash
-xcodegen generate                                     # regenerate FitBridge.xcodeproj from project.yml
+xcodegen generate                                     # regenerate HealthLoom.xcodeproj from project.yml
 swift test --package-path Packages/SyncKit            # run a single package's tests
-xcodebuild test -project FitBridge.xcodeproj \
-  -scheme FitBridge -destination 'platform=iOS Simulator,name=iPhone 17'
+xcodebuild test -project HealthLoom.xcodeproj \
+  -scheme HealthLoom -destination 'platform=iOS Simulator,name=iPhone 17'
 ```
 
 | Package | Tests | Coverage |
@@ -126,7 +126,7 @@ xcodebuild test -project FitBridge.xcodeproj \
 | GoogleHealthClient | 35 | OAuth PKCE flow, token refresh, `reconcile`/`dailyRollup` decoding against real-shaped fixtures, retry/backoff |
 | SyncKit | 228 | `TypeMapper` golden files per data type + rejection rules, `SyncEngine` idempotency/cursor/lookback, `HealthKitWriter` batched existence diff, backfill chunking/checkpointing, background scheduling, sync log redaction |
 | CoachKit | 1 | Placeholder — provider abstraction not yet implemented |
-| **FitBridgeUITests** | **2** | **XCUITest: onboarding happy path, dashboard sync states** |
+| **HealthLoomUITests** | **2** | **XCUITest: onboarding happy path, dashboard sync states** |
 
 ## Requirements
 

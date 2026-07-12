@@ -15,7 +15,7 @@
 //
 // **Where the disabled-type filter lives (WP-17 deliverable 3):** this WP is
 // explicitly barred from touching `SyncEngine.swift` (SyncKit, WP-16's/other
-// WPs' territory) or `FitBridgeApp.swift` (WP-16's territory), so the filter
+// WPs' territory) or `HealthLoomApp.swift` (WP-16's territory), so the filter
 // can't live inside the sync engine itself or the background-task registration
 // site. It lives here instead, as a pure, static, side-effect-free function
 // (`filterEnabled(_:disabled:)`) -- every *caller* of `SyncEngine.syncAll
@@ -45,7 +45,7 @@ import Observation
 @MainActor
 @Observable
 final class SyncPreferences {
-    private static let disabledTypesDefaultsKey = "com.fitbridge.settings.disabledSyncTypes"
+    private static let disabledTypesDefaultsKey = "com.healthloom.settings.disabledSyncTypes"
 
     /// Every `GoogleDataType` this app can sync anywhere -- HealthKit *or*
     /// `LocalSample` (architecture.md D2) -- i.e. every non-`.skip` row of

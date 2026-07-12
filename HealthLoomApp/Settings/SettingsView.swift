@@ -27,7 +27,7 @@
 // to consult (see that file's header note on the two known call sites).
 //
 // WP-18 (implementation-plan.md) addendum: one additive `Section` below adds
-// a `NavigationLink` to the new "Sync Log" viewer (`FitBridgeApp/Diagnostics/
+// a `NavigationLink` to the new "Sync Log" viewer (`HealthLoomApp/Diagnostics/
 // SyncLogView.swift`) -- this is the one small nav-link edit that WP's scope
 // fence explicitly allows in this file; nothing above this comment block
 // changed.
