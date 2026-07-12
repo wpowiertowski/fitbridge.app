@@ -1,13 +1,25 @@
-# Implementation Plan — HealthLoom (iOS 26 / Swift 6.2)
+# Implementation Plan — HealthLoom (iOS 27 / Swift 6.4)
 
 Executable, agent-ready work packages implementing [architecture.md](architecture.md),
 grounded in [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md).
 Testing requirements per package are summarized here; the full strategy is in
 [test-plan.md](test-plan.md).
 
-**Target:** iOS 26+, Xcode 26+, Swift 6.2.
-**AI:** Foundation Models framework (on-device + WWDC 2026 unified `LanguageModel` route
-for Claude/Gemini), with direct REST fallback clients where official packages aren't shipping.
+**Target:** iOS 27+, Xcode 27 beta+ (Apple Silicon only), Swift 6.4 (language mode 6).
+**AI:** Foundation Models framework end-to-end — on-device model by default, Apple's
+Private Cloud Compute server model as the free bigger-model tier, and Claude
+(official `ClaudeForFoundationModels` package) / Gemini (Firebase SDK) through iOS 27's
+public `LanguageModel` protocol (architecture D9/D14). No hand-rolled provider REST
+clients or SSE parsing anywhere in this plan.
+
+**Toolchain note (temporary, revisit before launch):** package manifests stay at
+`// swift-tools-version: 6.2` — that is a *minimum*, parses under both Xcode 26 and 27,
+and nothing here needs 6.4-only manifest APIs. GitHub's macOS runners do not yet ship
+the Xcode 27 beta (actions/runner-images#14196), so keeping 6.2 keeps the per-package
+`swift test` CI jobs green (they build for the macOS host); the app job requires the
+iOS 27 SDK and auto-skips with a warning until the runner image ships Xcode 27. Local
+development uses the Xcode 27 beta (Swift 6.4 compiler). Flipping manifests to 6.4 and
+un-guarding CI is a WP-38 launch-checklist item.
 
 ---
 
@@ -43,8 +55,8 @@ WP-01 ─┬─ WP-02 ─┬─ WP-07 ─┐
        └─ WP-06 ─── WP-08 ─┘
 P0 done ──▶ WP-11..18 (P1, mostly parallel)
 P0 done ──▶ WP-19..26 (P2; needs P1's data breadth only for polish)
-WP-27 needs WP-21..25 · WP-28..30 need WP-27 · WP-31/32 need WP-28..30
-P4 (WP-33..38) needs P1 + P2; WP-33 can start after WP-10.
+WP-27 needs WP-21..25 · WP-28..30 need WP-27 · WP-31 needs WP-23+27 · WP-32 needs WP-28..29
+P4 (WP-33..39) needs P1 + P2; WP-33 can start after WP-10.
 ```
 
 ---
@@ -53,19 +65,25 @@ P4 (WP-33..38) needs P1 + P2; WP-33 can start after WP-10.
 
 These gate everything; start them on day one. Agents cannot do them.
 
-1. **Xcode 26** installed; physical **Apple-Intelligence-capable device** (iPhone 15 Pro+)
+1. **Xcode 27 beta** installed (Apple Silicon Mac required — Xcode 27 dropped Intel);
+   physical **Apple-Intelligence-capable device** (iPhone 15 Pro+) on the **iOS 27 beta**
    with Apple Intelligence enabled and the model fully downloaded (availability reports
    `.modelNotReady` while downloading). The simulator does not run the on-device model
    reliably — AI work is device-tested.
 2. **Apple Developer Program**: App ID with HealthKit capability.
 3. **Google Cloud project**: enable Google Health API; create an iOS OAuth 2.0 client.
-4. **Start Google OAuth verification now** (the launch long pole): all Health API scopes
+4. **Start Google OAuth verification now** (launch long pole #1): all Health API scopes
    are Restricted ⇒ verified domain, live homepage, privacy policy, per-scope written
    justification. Track status in `progress.md`.
-5. A test Google account (**personal, not Workspace** — Workspace is unsupported by the
+5. **Apply for the Private Cloud Compute entitlement now** (launch long pole #2, gates
+   WP-28a): requires App Store Small Business Program enrollment and <2M first-time
+   downloads across all the developer's apps, plus an application on the developer site.
+   There is no paid tier above the threshold. Track status in `progress.md`.
+6. A test Google account (**personal, not Workspace** — Workspace is unsupported by the
    Health API) paired with a Fitbit Air or Pixel Watch producing real data.
-6. AI provider API keys (Anthropic/OpenAI/Google) for **testing** cloud providers — end
-   users supply their own at runtime.
+7. AI provider API keys (Anthropic and Google/Firebase) for **testing** the BYO-key
+   tiers — end users supply their own at runtime. (No OpenAI key: that tier is deferred,
+   architecture §7.6.)
 
 ---
 
@@ -78,12 +96,14 @@ idempotently, visible on a minimal dashboard.
 **Depends on:** nothing · **Touches:** repo root, all package manifests
 **Objective:** Compilable workspace with the module boundaries from architecture.md §2.
 **Steps:**
-1. New Xcode project → App → SwiftUI lifecycle → name `HealthLoom`, deployment target iOS 26.
+1. New Xcode project → App → SwiftUI lifecycle → name `HealthLoom`, deployment target iOS 27.
 2. Create local packages `CoreModel`, `Secrets`, `GoogleHealthClient`, `SyncKit`,
    `CoachKit` under `Packages/`, each with a test target. Wire the dependency order from
    architecture.md §2 (SyncKit depends on CoreModel, Secrets, GoogleHealthClient; CoachKit
    on CoreModel, Secrets; app on all).
-3. In every `Package.swift`: `swift-tools-version: 6.2` and
+3. In every `Package.swift`: `swift-tools-version: 6.2` (a minimum — kept below 6.4
+   deliberately; see the Toolchain note at the top of this file), platforms
+   `.iOS("27.0")` (+ `.macOS` at the newest version CI hosts can run), and
    ```swift
    swiftSettings: [
        .defaultIsolation(MainActor.self),
@@ -97,8 +117,10 @@ idempotently, visible on a minimal dashboard.
    (`com.healthloom.sync.refresh`), and the OAuth redirect URL scheme.
 5. Set Strict Concurrency = Complete on all targets.
 6. CI: GitHub Actions workflow `ci.yml` — macOS runner, `swift test` per package +
-   `xcodebuild build test` for the app scheme on an iOS 26 simulator. Cache SPM. CI must
-   go red on warnings (`SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` or `-warnings-as-errors`).
+   `xcodebuild build test` for the app scheme on an iOS 27 simulator (Xcode 27 beta;
+   the app job auto-skips with a `::warning` until the runner image ships it — see the
+   Toolchain note). Cache SPM. CI must go red on warnings
+   (`SWIFT_TREAT_WARNINGS_AS_ERRORS=YES` or `-warnings-as-errors`).
 7. Move the design mockups into `Design/` (they are reference, not build inputs).
 **Done when:** empty app builds and runs; `swift test` passes (empty suites) in CI.
 **Tests:** none beyond CI plumbing.
@@ -429,6 +451,8 @@ mark IRN/ECG rows `isClinical` so D8 excludes them from AI by default.
    round-robin so one huge type doesn't starve others; inter-chunk delay for quota.
 2. Runs at `.utility` priority; suspends when a foreground incremental sync is active
    (SyncEngine exposes an `isBusy` signal); resumes on next launch/BG task if killed.
+   Chunk-checkpoint persistence wrapped in `withTaskCancellationShield` (Swift 6.4) so
+   a cancellation mid-write can't tear `backfillCursor`.
 3. UI: progress per type ("Mar 2026 … done"), pause/resume, chosen horizon changeable
    (extending re-opens the walk).
 **Tests:** chunk boundaries exact (no gap/overlap between chunks); kill-resume from
@@ -441,7 +465,8 @@ overlapping incremental sync.
 1. Register `BGAppRefreshTask` (`com.healthloom.sync.refresh`) at launch; schedule next
    on every run and in the handler (always reschedule, even on failure).
 2. Handler: run `syncAll` for due types with a hard time budget (~20 s: check
-   `task.expirationHandler`, cancel gracefully, cursors make partial runs safe).
+   `task.expirationHandler`, cancel gracefully, cursors make partial runs safe;
+   shield the final `SyncState` cursor write with `withTaskCancellationShield`).
 3. Optionally a `BGProcessingTask` for backfill chunks (requiresExternalPower = false,
    network = true).
 **Tests:** unit-test the "due types + budget" planner as a pure function; manual:
@@ -479,14 +504,17 @@ WP-19→20→21 are sequential; WP-22 parallel with 19–21; WP-23–26 after.
 1. Read set: HealthKit statistics queries (steps daily avg 30 d, resting HR trend, HRV
    baseline, sleep duration/stage split 14 d, workouts 30 d — all sources, so Apple Watch
    workouts are first-class; merge linked Fitbit supplements from `LocalSample` per D13.6,
-   never describing both copies of one activity) + `LocalSample` (AZM; clinical types only
-   produce `isClinical` fields). Request HK
-   *read* authorization here for exactly this set (via WP-06's `requestRead`).
+   never describing both copies of one activity) + the user's **heart-rate zone
+   configuration** (new iOS 27 HealthKit zones API — a profile field and future strain
+   input, architecture D6) + `LocalSample` (AZM; clinical types only produce `isClinical`
+   fields). Request HK *read* authorization here for exactly this set (via WP-06's
+   `requestRead`).
 2. Each derived `ProfileField`: display text ("~8,200 steps/day (30-day avg)"),
    `source` ("HealthKit · Fitbit Air"), `asOf`, flags. User goals (from settings) and
-   pinned user corrections (WP-32) are fields too — corrections beat re-derivation.
-3. `refresh()` runs after each sync completion and at most hourly; pure derivation
-   functions take sample arrays in ⇒ unit-testable without HK.
+   pinned user corrections (WP-30) are fields too — corrections beat re-derivation.
+3. `refresh()` triggers off SwiftData's `HistoryObserver` (iOS 27) observing SyncKit's
+   persistent-history writes — no hand-wired completion signal — throttled to at most
+   hourly; pure derivation functions take sample arrays in ⇒ unit-testable without HK.
 4. Summary API for tools: `sleepSummary(nights:)`, `stepsSummary(days:)`,
    `workoutsSummary(days:)`, `vitalsSummary()` — all reading derived data, never raw dumps.
 **Tests:** derivation functions with synthetic sample arrays (avg/trend math, empty data,
@@ -498,9 +526,11 @@ staleness (`asOf`) propagation.
 **Steps:**
 1. `context(for purpose: .chat|.dailyInsight) -> HealthContext` from `KnowledgeProfile`
    only; drop `excludedFromAI` fields; clinical fields only if user opted in (D8).
-2. Token budget: estimate (chars/4 heuristic); if over budget for the active provider
-   (`SystemLanguageModel.default.contextSize` on-device; per-provider constants for cloud),
-   drop fields by priority rank (vitals > sleep > activity > history) until it fits.
+2. Token budget: estimate (chars/4 heuristic); if over budget for the active tier
+   (query the model where exposed; working constants: on-device ~4K tokens, PCC 32K,
+   Claude/Gemini large), drop fields by priority rank (vitals > sleep > activity >
+   history) until it fits. Over-budget on-device is also the trigger for a PCC
+   escalation *offer* (D14.2), decided in WP-27 — this WP only reports the overflow.
 3. Every assembled context is persisted as `ContextSnapshot` and its ID returned with the
    context (chat turns link to it — trace UI, WP-32).
 **Tests:** exclusion honored (excluded string never appears in serialized context —
@@ -522,18 +552,23 @@ round-trip.
 including a base that *contains* the suffix text — still appended); version history
 append/reset; default prompt non-empty.
 
-### WP-22 · Foundation Models session + availability gate
+### WP-22 · Foundation Models availability gate + session factory
 **Depends on:** WP-01 · **Touches:** `CoachKit`
 **Steps:**
 1. `AvailabilityGate` mapping `SystemLanguageModel.default.availability` to UI states:
    `.available`, `.deviceNotEligible`, `.appleIntelligenceNotEnabled`, `.modelNotReady`
-   (each with user-facing copy + the cloud-fallback suggestion).
-2. `AppleFoundationSession` wrapper: create `LanguageModelSession(instructions:)`, expose
-   `respond`, `streamResponse`, `prewarm()`, `isResponding`. One session per conversation;
-   fresh session per one-shot task (insights).
-3. Wrap behind `protocol CoachSession` so tests and cloud providers share the seam.
-**Tests:** availability mapping (inject each case); session lifecycle rules (fresh vs
-reused) as unit logic; real generation covered by on-device manual tests (test plan §7).
+   (each with user-facing copy + the next-tier fallback suggestion). Shape it to also
+   carry PCC states when WP-28a lands: offline / entitlement missing / `quotaUsage`
+   near-limit / at-limit (D14.3–4).
+2. `CoachSessionFactory`: builds `LanguageModelSession(model:tools:instructions:)` for
+   any `any LanguageModel` (on-device `SystemLanguageModel.default` in this WP; PCC /
+   Claude / Gemini plug in via WP-28 with zero factory changes — that's D9's point).
+   Expose `respond`, `streamResponse`, `prewarm()`, `isResponding`. One session per
+   conversation; fresh session per one-shot task (insights).
+3. Keep a thin `protocol CoachSession` seam over the session so tests can inject a
+   scripted stream without a model.
+**Tests:** availability/quota mapping (inject each case); session lifecycle rules (fresh
+vs reused) as unit logic; real generation covered by on-device manual tests (test plan §7).
 
 ### WP-23 · ReadinessEngine + @Generable DailyInsight
 **Depends on:** WP-19, WP-22 · **Touches:** `CoachKit`
@@ -569,8 +604,9 @@ clamping; tools respect exclusions (excluded field never in any tool output).
 **Steps:** Coach tab — message list (`ChatTurn`s), streaming tokens via
 `streamResponse`, input disabled while `isResponding`, `prewarm()` on appear, stop button,
 error/unavailable states from `AvailabilityGate`, "What did the coach see?" expander per
-assistant message (reads linked `ContextSnapshot` — full UI in WP-32). Persist turns.
-**Tests:** UI test with a `MockCoachProvider` (scripted stream): send → stream renders →
+assistant message (reads linked `ContextSnapshot` — full UI in WP-30). Persist turns.
+Leave a slot in the toolbar for WP-32's tier switcher.
+**Tests:** UI test with a scripted mock `CoachSession` (WP-22's test seam): send → stream renders →
 turn persisted → relaunch shows history; unavailable state rendering.
 
 ### WP-26 · Prompt Editor
@@ -583,61 +619,80 @@ history restore works.
 
 ---
 
-## Phase P3 — Multi-provider (Claude / OpenAI / Gemini)
+## Phase P3 — Multi-tier coach (Private Cloud Compute / Claude / Gemini)
 
-**Phase goal:** same coach, user-selectable model, cloud strictly opt-in.
+**Phase goal:** same coach, user-selectable model tier, every off-device hop strictly
+opt-in. iOS 27's `LanguageModel` protocol carries all of it (architecture D9/D14/D15) —
+this phase writes catalog/consent/orchestration glue, not model clients.
 
-### WP-27 · CoachProvider protocol + registry + orchestrator
+### WP-27 · ModelCatalog + orchestrator on the `LanguageModel` protocol
 **Depends on:** WP-21–25 · **Touches:** `CoachKit`
+**Objective:** The OS protocol *is* the provider seam (D9); build the app-owned pieces
+around it.
 **Steps:**
-1. ```swift
-   protocol CoachProvider: Sendable {
-       var id: ProviderID { get }          // .appleFoundation, .claude, .openai, .gemini
-       var runsOnDevice: Bool { get }
-       var requiresAPIKey: Bool { get }
-       func reply(systemPrompt: String, context: HealthContext, history: [ChatTurn],
-                  userMessage: String,
-                  stream: @escaping @Sendable (String) -> Void) async throws -> String
-   }
-   ```
-2. Refactor Phase-2 Apple path into `AppleFoundationProvider` (behavior unchanged —
-   protect with existing tests).
-3. `ProviderRegistry`: lists providers, `isEnabled` = (on-device) or (key in Keychain ∧
-   consent recorded). `CoachOrchestrator`: owns prompt assembly (always via PromptManager
-   ⇒ safety suffix on every provider, D10/D8), context snapshotting, provider dispatch,
-   error normalization (`ProviderError.unauthorized/.rateLimited/.network/.contentFilter`).
-**Tests:** registry gating truth table (key × consent); orchestrator always includes
-suffix regardless of provider (assert on a spy provider); snapshot stored per turn.
+1. `ModelCatalog`: table of tiers — `.onDevice` (`SystemLanguageModel.default`),
+   `.privateCloudCompute`, `.claude`, `.gemini` — each entry: display name,
+   `makeModel() -> any LanguageModel`, `runsOnDevice`, `requiresAPIKey`,
+   `requiresConsent`, availability check. `isEnabled` = on-device, or
+   (consent recorded ∧ (no key needed ∨ key in Keychain)). This WP ships the catalog
+   with only `.onDevice` live; WP-28 fills the other rows.
+2. `CoachOrchestrator`: owns prompt assembly (always via PromptManager ⇒ safety suffix
+   on every tier, D10/D8), context snapshotting, dispatch through `CoachSessionFactory`
+   (WP-22), and error normalization over the framework's `LanguageModelError`
+   (`.rateLimited` / `.contextSizeExceeded` / `.timeout` / guardrail cases) plus
+   provider-specific errors (e.g. `ClaudeError.missingCredential`).
+3. Escalation offers per D14.2: on-device context-over-budget (reported by WP-20) or an
+   explicit "deeper analysis" request ⇒ *offer* PCC; never auto-switch.
+**Tests:** catalog gating truth table (key × consent × availability); orchestrator always
+includes suffix regardless of tier (assert on a spy `LanguageModel` conformance);
+snapshot stored per turn; error-normalization table; escalation offered exactly on the
+documented triggers.
 
-### WP-28 · Cloud providers (a: Claude, b: OpenAI, c: Gemini)
-**Depends on:** WP-27 · **Touches:** `CoachKit` · **Parallelizable per provider.**
-**Route rule (D9):** if the provider ships an official `LanguageModel` package for the
-unified Foundation Models route, wrap it (session code identical to on-device — expected
-for Claude and Gemini); otherwise implement a REST client conforming to `CoachProvider`.
-**REST specifics:**
-- **Claude:** Anthropic Messages API; system prompt as top-level `system`; SSE streaming
-  (`content_block_delta`); default model claude-sonnet-5-class (small constant table, user
-  can pick); map 401→`.unauthorized`, 429→`.rateLimited`, `overloaded_error`→retry-once.
-- **OpenAI:** Responses/Chat Completions; system role message; SSE deltas.
-- **Gemini:** `generateContent` streaming variant; `systemInstruction` field.
-- Shared: `SSEParser` utility (one implementation, fixture-tested); keys read from
-  Keychain per request (never cached in fields); history mapped to each provider's turn
-  format; context injected as a structured block in the first user turn, not the system
-  prompt (keeps user's system-prompt edits clean).
-**Tests (stubbed HTTP, per provider):** request encoding golden (system prompt placement,
-history mapping, model name, headers incl. auth — assert key not logged); SSE stream
-parsing from fixture (multi-chunk, split-across-packet events, `[DONE]`/stop reasons);
-error mapping table; key-missing throws before any network call.
+### WP-28 · Off-device tiers (a: Private Cloud Compute, b: Claude, c: Gemini)
+**Depends on:** WP-27 · **Touches:** `CoachKit`, app entitlements ·
+**Parallelizable per tier.**
+**Route rule (D9):** every tier is a `LanguageModel` conformance handed to the existing
+session factory — no REST clients, no SSE parsing, no request encoding in this repo.
+- **a — Private Cloud Compute:** `PrivateCloudComputeLanguageModel()` behind the
+  catalog. Add the PCC entitlement (granted in P-1.5). Handle `quotaUsage` pre-dispatch
+  (near-limit warning, at-limit fallback to on-device, D14.3), reasoning-level
+  selection, and offline unavailability (D14.4). No API key; consent screen still
+  required (D14.1).
+- **b — Claude:** depend on Anthropic's official `ClaudeForFoundationModels` package
+  (github.com/anthropics/ClaudeForFoundationModels). Build
+  `ClaudeLanguageModel(name:auth:)` per session with `.apiKey` read from `KeychainStore`
+  (it's the *user's* key entered at runtime — the package's don't-embed-a-key warning
+  targets developer keys baked into binaries; `.proxied` mode remains available if a
+  relay ships later). Model picker from the `ClaudeModel` constants table.
+  **`serverTools` is never configured** — `.webSearch`/`.webFetch`/`.codeExecution`
+  would move health-derived text into search infrastructure (D11). Map `ClaudeError`
+  + `LanguageModelError` into WP-27's normalized errors.
+- **c — Gemini:** the Firebase Apple SDK's `LanguageModel` conformance; key/config +
+  consent identical in shape to Claude. Keep the Firebase dependency scoped to
+  CoachKit — nothing else imports it.
+- **OpenAI: deferred** until an official/vetted `LanguageModel` conformance exists
+  (architecture §7.6; WWDC26 session 339 is the conformance recipe if one must be
+  built later). Do not hand-roll a REST client.
+**Tests (per tier):** catalog integration via a stubbed `LanguageModel` conformance;
+key-missing throws before any dispatch (Claude/Gemini); injected quota states render
+warning/fallback (PCC); error-mapping tables; guardrail/content-filter surfaced as a
+user-visible state, not a crash. Live smoke against real PCC/Claude/Gemini is a manual
+device test (test plan §7), not CI.
 
 ### WP-29 · Key management + consent UI
 **Depends on:** WP-28 · **Touches:** app target
-**Steps:** Settings → AI Providers: per-provider row (status, model picker), key entry
-(SecureField, stored via KeychainStore, validate with a 1-token ping, delete key),
-**consent screen** required before first enable: names the destination company/host,
-states what data leaves (profile fields + messages), notes prior turns already sent can't
-be recalled ("forget" applies forward). Consent recorded per provider with timestamp.
-**Tests:** UI test — enable flow blocked without key; blocked without consent; key delete
-disables provider; provider switcher in chat shows only enabled providers.
+**Steps:** Settings → AI Models: per-tier row (status, model picker where applicable).
+Claude/Gemini rows get key entry (SecureField, stored via KeychainStore, validate with a
+1-token ping, delete key). The PCC row has no key but shows quota state ("Apple cloud —
+included; daily limit tied to your iCloud account") and its availability. Every
+off-device tier requires a **consent screen** before first enable: names the destination
+(Apple Private Cloud Compute / Anthropic / Google), states what data leaves (profile
+fields + messages) and the tier's privacy properties (PCC: not stored, not used for
+training; BYO-key: provider's terms apply), notes prior turns already sent can't be
+recalled ("forget" applies forward). Consent recorded per tier with timestamp.
+**Tests:** UI test — enable flow blocked without key (Claude/Gemini); blocked without
+consent (all off-device tiers incl. PCC); key delete disables tier; tier switcher in
+chat shows only enabled tiers.
 
 ### WP-30 · Knowledge transparency UI ("You" tab)
 **Depends on:** WP-19, WP-20, WP-27 · **Touches:** app target
@@ -645,10 +700,38 @@ disables provider; provider switcher in chat shows only enabled providers.
 1. **Profile:** render every `ProfileField` (display text, source, as-of, AI on/off
    toggle per field; clinical fields visually distinct, default off).
 2. **Correct:** edit a derived field ⇒ pinned user override (beats re-derivation, WP-19).
-3. **Trace:** per-message "What did the coach see?" → rendered `ContextSnapshot`.
+3. **Trace:** per-message "What did the coach see?" → rendered `ContextSnapshot` + the
+   tier that served the turn (D15.b — "…and where did it run?").
 4. **Forget:** per-field exclusion, global derived-insight reset, chat-history wipe.
 **Tests:** UI test — toggling a field off ⇒ next context (via debug inspector or mock
-provider capture) lacks it; correction persists across refresh; forget clears.
+provider capture) lacks it; correction persists across refresh; forget clears; trace
+shows the correct tier badge.
+
+### WP-31 · Coach evals on the Evaluations framework
+**Depends on:** WP-23, WP-27 · **Touches:** `CoachKit` (eval target), CI
+**Objective:** Implement test-plan §9 on Apple's new Evaluations framework (WWDC26
+sessions 298/299) instead of a hand-rolled harness: grounding (insights reference only
+context-snapshot values), `DailyInsight` structure stability, the safety red-team set
+(clinical refusals, prompt-injection via the user-editable base), and cross-tier
+consistency (on-device / PCC / Claude / Gemini must agree on safety outcomes).
+Wire the hill-climbing workflow (session 335) for SafetyLayer and default-prompt
+tuning — **proposals are human-reviewed, never auto-adopted**.
+**Tests:** the eval sets are the deliverable; runs nightly/pre-release on a macOS 27
+host or designated device (not per-push CI — model-in-the-loop).
+
+### WP-32 · Tier switcher via Dynamic Profiles
+**Depends on:** WP-28, WP-29 · **Touches:** `CoachKit`, app target
+**Objective:** Architecture D15 — mid-conversation model switching that preserves the
+transcript, built on Foundation Models' Dynamic Profiles.
+**Steps:** in-chat tier menu (enabled tiers only, from `ModelCatalog`); swap
+model/tools/instructions via Dynamic Profiles without discarding the transcript;
+re-apply `effectivePrompt` (user base + safety suffix) on every swap; re-check consent
+on any off-device target; stamp each `ChatTurn` with its serving tier (feeds WP-30's
+trace badge).
+**Tests:** suffix survives N random tier switches (property test); switch to a
+non-consented tier is blocked at the menu *and* at dispatch; transcript preserved
+across swaps; turn badges correct; escalation *offer* (WP-27.3) routes through the
+same switcher UI.
 
 ---
 
@@ -662,8 +745,9 @@ provider capture) lacks it; correction persists across refresh; forget clears.
    real data: readiness hero ← `ReadinessEngine` (incl. "based on N of 4 signals" state),
    metric rows ← HealthKit/KnowledgeStore today-values, sync status ← `SyncState`
    ("Fitbit Air · synced 9m ago"), coach panel ← latest `DailyInsight` (tap → Coach tab).
-2. Edit mode: drag-to-reorder metric rows; order in `UserDefaults`; add/remove metrics
-   from the full synced-type list.
+2. Metric-row reordering via SwiftUI's iOS 27 reorderable-content API (no custom
+   Edit-mode drag plumbing); order in `UserDefaults`; add/remove metrics from the full
+   synced-type list.
 3. **Design deviations (mandated, D12):** Dynamic Type — replace fixed `helv(size)` with
    `ScaledMetric`-relative sizes; dark-mode palette variant (derive: canvas→near-black
    warm, ink→light teal, keep rust accent, re-check ≥4.5:1 contrast); all rows get
@@ -676,10 +760,11 @@ UI test for edit mode; accessibility audit (test plan §6).
 ### WP-34 · Scheduled insights + notifications
 **Depends on:** WP-16, WP-23
 **Steps:** after the overnight BG sync completes (first run after 5 am local), generate
-`DailyInsight` (on-device provider only unless user opted a cloud provider *and* enabled
-"insights via cloud" separately), post a local notification (headline only — no health
-values on the lock screen by default; toggle for full text). Request notification
-permission in context, not at launch.
+`DailyInsight` (on-device by default; PCC allowed if the user enabled that tier *and*
+"insights via Apple cloud" separately — still no third-party hop for unattended
+generation; BYO-key tiers are chat-only for insights), post a local notification
+(headline only — no health values on the lock screen by default; toggle for full text).
+Request notification permission in context, not at launch.
 **Tests:** scheduling logic (pure function: last-run + clock → should-run); notification
 content redaction; UI test for permission flow.
 
@@ -706,11 +791,18 @@ sync memory profile on a 1-year backfill (Instruments — no unbounded page accu
 
 ### WP-38 · Launch checklist (human + agent mix)
 - [ ] Google OAuth verification **approved** for Restricted scopes (started in P-1).
+- [ ] **PCC entitlement granted** (applied in P-1.5); PCC quota behavior verified on a
+      real iCloud account; app degrades correctly if the entitlement lapses.
+- [ ] Toolchain finalization: CI un-guarded onto Xcode 27 (GA or runner-image beta —
+      see Toolchain note), package manifests bumped to `swift-tools-version: 6.4`,
+      built against the iOS 27 GA SDK.
 - [ ] App Review prep: HealthKit usage strings accurate; demo video of Google consent for
       review notes; privacy nutrition label (Health & Fitness data — linked-to-user? no
-      tracking); non-medical disclaimer surfaced in onboarding **and** SafetyLayer.
-- [ ] Cloud-AI consent screens name destinations; on-device is default. No health values
-      in logs/analytics/crash reports (verified per test plan §8).
+      tracking) covering PCC and BYO-key tiers; non-medical disclaimer surfaced in
+      onboarding **and** SafetyLayer.
+- [ ] Off-device-AI consent screens name destinations (Apple PCC / Anthropic / Google);
+      on-device is default; Claude `serverTools` confirmed absent from every code path.
+      No health values in logs/analytics/crash reports (verified per test plan §8).
 - [ ] Graceful degradation matrix verified (test plan §7): no Apple Intelligence, no
       Google account, HK denied, offline.
 - [ ] Built only on Google Health API (Fitbit Web API sunsets Sept 2026 — no legacy calls;
@@ -720,19 +812,31 @@ sync memory profile on a 1-year backfill (Instruments — no unbounded page accu
 - [ ] Dual-wear verification executed on a real Apple Watch + Fitbit Air day
       (test plan §7 manual scripts).
 
+### WP-39 · (Optional) Siri & Spotlight via App Intents
+**Depends on:** WP-23, WP-33 · **Decision gate:** nice-to-have, not on the launch path.
+**Steps:** iOS 27 App Intents adoption — **entity schemas** contribute readiness and
+today-metrics to the Spotlight semantic index; **intent schemas** for natural-language
+actions ("What's my readiness?", "Sync my Fitbit now"); **View Annotations** on the
+Today view so on-screen values are referenceable in Siri conversations. Exposing health
+values to the system index is opt-in and default OFF (D11 posture). Validate with the
+new **App Intents Testing framework** (real system pathways — Siri/Shortcuts/Spotlight —
+no UI automation).
+**Tests:** AppIntentsTesting suite per intent; opt-out ⇒ entities absent from the index;
+sync intent respects the same in-flight coalescing as every other trigger (WP-09).
+
 ---
 
 ## Sequencing summary
 
 ```
-P-1 Human prereqs (OAuth verification = long pole) ... start day one
+P-1 Human prereqs (OAuth verification + PCC entitlement = long poles) ... day one
 P0  WP-01..10  auth + 4-type slice ................... proves the pipe
 P1  WP-11..18  full mapping, backfill, background ..... complete data
 P2  WP-19..26  on-device coach + transparency ......... private AI
-P3  WP-27..30  Claude/OpenAI/Gemini + consent ......... model choice
-P4  WP-33..38  Yacht club UI, insights, wipe, launch .. polish
+P3  WP-27..32  PCC/Claude/Gemini tiers, consent, evals  model choice
+P4  WP-33..39  Yacht club UI, insights, wipe, launch .. polish
 ```
 
-Day-one priorities: **Google OAuth verification** (P-1.4) and the **TypeMapper golden
-test suite** (WP-07/11) — the first gates launch, the second guards correctness for
-everything downstream.
+Day-one priorities: **Google OAuth verification** (P-1.4), the **PCC entitlement
+application** (P-1.5), and the **TypeMapper golden test suite** (WP-07/11) — the first
+two gate launch, the third guards correctness for everything downstream.
