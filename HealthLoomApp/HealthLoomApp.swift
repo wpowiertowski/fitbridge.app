@@ -244,14 +244,23 @@ private enum HealthLoomBackgroundSync {
     nonisolated static func scheduleNextRun() {
         let request = BGAppRefreshTaskRequest(identifier: identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: configuration.reschedulingInterval)
-        do {
-            try BGTaskScheduler.shared.submit(request)
-            logger.debug("Scheduled next background sync")
-        } catch {
-            // Redacted per architecture.md D11: a `BGTaskScheduler.Error`'s
-            // description carries no health values or tokens, only a
-            // scheduling-error code, so `.public` is safe here.
-            logger.error("Failed to schedule next background sync: \(String(describing: error), privacy: .public)")
+        // iOS 27 deprecated the synchronous throwing `submit(_:)` in favor of
+        // `submitTaskRequest(_:completionHandler:)`, which Swift imports as
+        // `async throws`. This function stays synchronous (its two call
+        // sites -- `init()` and the launch handler -- rely on that), so the
+        // submit is fired from an unstructured `Task` rather than propagated
+        // as `async`; the original fire-and-forget/logged-not-fatal contract
+        // is unchanged.
+        Task {
+            do {
+                try await BGTaskScheduler.shared.submitTaskRequest(request)
+                logger.debug("Scheduled next background sync")
+            } catch {
+                // Redacted per architecture.md D11: a `BGTaskScheduler.Error`'s
+                // description carries no health values or tokens, only a
+                // scheduling-error code, so `.public` is safe here.
+                logger.error("Failed to schedule next background sync: \(String(describing: error), privacy: .public)")
+            }
         }
     }
 

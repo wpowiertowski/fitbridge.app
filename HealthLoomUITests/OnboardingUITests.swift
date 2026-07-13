@@ -62,8 +62,10 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(anyElement["dashboard.syncNow"].waitForExistence(timeout: 10))
         for rawValue in ["steps", "heart_rate", "weight", "sleep"] {
             let element = anyElement["dashboard.row.\(rawValue).name"]
-            if !element.waitForExistence(timeout: 5) {
+            var scrollAttempts = 0
+            while !element.exists && scrollAttempts < 5 {
                 app.swipeUp()
+                scrollAttempts += 1
             }
             XCTAssertTrue(
                 element.waitForExistence(timeout: 5),

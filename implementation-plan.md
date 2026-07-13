@@ -18,8 +18,10 @@ and nothing here needs 6.4-only manifest APIs. GitHub's macOS runners do not yet
 the Xcode 27 beta (actions/runner-images#14196), so keeping 6.2 keeps the per-package
 `swift test` CI jobs green (they build for the macOS host); the app job requires the
 iOS 27 SDK and auto-skips with a warning until the runner image ships Xcode 27. Local
-development uses the Xcode 27 beta (Swift 6.4 compiler). Flipping manifests to 6.4 and
-un-guarding CI is a WP-38 launch-checklist item.
+development uses the Xcode 27 beta (Swift 6.4 compiler). The real app build/test gate in
+the meantime is the local `pre-commit` hook (`make test`, pinned to the Xcode 27 beta via
+`DEVELOPER_DIR`) -- CI's skip isn't a coverage gap in practice. Flipping manifests to 6.4
+and un-guarding CI is a WP-38 launch-checklist item.
 
 ---
 
