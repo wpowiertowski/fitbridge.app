@@ -30,7 +30,7 @@ import Foundation
 /// the requirement -- same rationale as this package's other protocol seams
 /// (`BackfillHorizonRecordStore.swift`'s doc comment makes the identical
 /// argument for its own, unrelated side-store).
-public protocol SyncLogPersisting: Sendable {
+nonisolated public protocol SyncLogPersisting: Sendable {
     nonisolated func load() -> [SyncLogEntry]
     nonisolated func save(_ entries: [SyncLogEntry])
 }

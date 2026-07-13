@@ -11,13 +11,13 @@ import GoogleHealthClient
 
 final class ManualClock: TokenClock, @unchecked Sendable {
     private let lock = NSLock()
-    private var currentDate: Date
+    private nonisolated(unsafe) var currentDate: Date
 
     init(_ date: Date = Date(timeIntervalSince1970: 1_750_000_000)) {
         self.currentDate = date
     }
 
-    func now() -> Date {
+    nonisolated func now() -> Date {
         lock.lock()
         defer { lock.unlock() }
         return currentDate

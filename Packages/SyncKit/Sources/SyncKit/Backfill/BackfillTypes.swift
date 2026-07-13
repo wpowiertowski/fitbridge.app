@@ -108,7 +108,7 @@ public nonisolated struct BackfillConfiguration: Sendable, Equatable {
 /// owns, analogous to WP-17's own "persist toggles in `UserDefaults`"
 /// instruction for its unrelated settings -- a plain key-value fact, not a
 /// modeled relationship, and nothing else in the schema needs to query it.
-public protocol BackfillHorizonRecordStore: Sendable {
+nonisolated public protocol BackfillHorizonRecordStore: Sendable {
     /// The deepest horizon this type's backfill has *fully completed*, or
     /// `nil` if it has never completed one (never started, or currently
     /// mid-walk). `nonisolated`, matching every other protocol seam in this
@@ -165,7 +165,7 @@ nonisolated public final class UserDefaultsBackfillHorizonRecordStore: BackfillH
 /// for the coordination note) -- mirrors `GoogleReconcileClient`'s own
 /// "narrow protocol over the real thing so tests can stub it" pattern
 /// (SyncEngineTypes.swift).
-public protocol BackfillBusyProbe: Sendable {
+nonisolated public protocol BackfillBusyProbe: Sendable {
     nonisolated func isBusy(for type: GoogleDataType) async -> Bool
 }
 

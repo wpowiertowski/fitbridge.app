@@ -11,13 +11,13 @@ import Foundation
 
 final class TestSyncClock: SyncClock, @unchecked Sendable {
     private let lock = NSLock()
-    private var current: Date
+    private nonisolated(unsafe) var current: Date
 
     init(_ date: Date) {
         self.current = date
     }
 
-    func now() -> Date {
+    nonisolated func now() -> Date {
         lock.lock()
         defer { lock.unlock() }
         return current

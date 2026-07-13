@@ -16,7 +16,7 @@
 /// Storage seam for the two Google OAuth tokens `GoogleAuthManager` persists.
 /// Deliberately narrower than `Secrets.SecretKey` (which also carries
 /// AI-provider keys this package has no business touching).
-public protocol GoogleTokenStoring: Sendable {
+nonisolated public protocol GoogleTokenStoring: Sendable {
     nonisolated func refreshToken() async throws -> String?
     /// `nil` deletes the stored value (mirrors `KeychainStore.delete`'s
     /// idempotent-when-absent contract).

@@ -72,12 +72,12 @@ import Testing
     @Test func persistenceRoundTripsAndAppliesTheSameCapOnReload() async {
         final class MemoryPersistence: SyncLogPersisting, @unchecked Sendable {
             private let lock = NSLock()
-            private var saved: [SyncLogEntry] = []
-            func load() -> [SyncLogEntry] {
+            private nonisolated(unsafe) var saved: [SyncLogEntry] = []
+            nonisolated func load() -> [SyncLogEntry] {
                 lock.lock(); defer { lock.unlock() }
                 return saved
             }
-            func save(_ entries: [SyncLogEntry]) {
+            nonisolated func save(_ entries: [SyncLogEntry]) {
                 lock.lock(); defer { lock.unlock() }
                 saved = entries
             }

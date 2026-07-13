@@ -13,7 +13,7 @@ import Foundation
 
 /// Thin `URLSession` wrapper. Production code uses `URLSessionHTTPSession`;
 /// tests inject a recording/scripted stub (see `Tests/.../Support`).
-public protocol HTTPSession: Sendable {
+nonisolated public protocol HTTPSession: Sendable {
     nonisolated func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
 

@@ -63,7 +63,7 @@ nonisolated public struct SyncConfiguration: Sendable, Equatable {
 /// against an exact, manually-advanced fake clock, never real wall-clock
 /// time -- WP-09's explicit instruction not to call `Date()` directly in
 /// testable logic.
-public protocol SyncClock: Sendable {
+nonisolated public protocol SyncClock: Sendable {
     nonisolated func now() -> Date
 }
 
@@ -82,7 +82,7 @@ nonisolated public struct SystemSyncClock: SyncClock {
 /// `GoogleHealthClient` conforms via `GoogleHealthClient+SyncEngine.swift`;
 /// tests substitute their own scripted/stub conformer instead of a
 /// network-backed client.
-public protocol GoogleReconcileClient: Sendable {
+nonisolated public protocol GoogleReconcileClient: Sendable {
     nonisolated func reconcile(
         type: GoogleDataType,
         since: Date,
@@ -106,7 +106,7 @@ public protocol GoogleReconcileClient: Sendable {
 /// will need to consult `WatchCoverageIndex`, itself backed by HealthKit
 /// reads -- inherently async; declaring the seam `async` now avoids a
 /// signature-breaking change later.
-public protocol ConflictFiltering: Sendable {
+nonisolated public protocol ConflictFiltering: Sendable {
     nonisolated func resolve(_ mapped: MappedObject, for point: GoogleDataPoint) async -> MappedObject
 }
 

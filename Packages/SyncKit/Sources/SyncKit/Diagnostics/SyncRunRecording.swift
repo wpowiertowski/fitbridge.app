@@ -20,7 +20,7 @@ import Foundation
 /// property (SyncEngine.swift) is `(any SyncRunRecording)?`, defaulting to
 /// `nil` -- every existing/test call site that doesn't pass one sees no
 /// behavior change at all.
-public protocol SyncRunRecording: Sendable {
+nonisolated public protocol SyncRunRecording: Sendable {
     nonisolated func record(_ outcome: SyncOutcome) async
 }
 
