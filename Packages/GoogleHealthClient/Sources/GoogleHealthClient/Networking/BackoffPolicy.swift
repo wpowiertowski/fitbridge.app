@@ -14,7 +14,7 @@ import Foundation
 
 /// Sleeps for a computed backoff duration. Production sleeps for real;
 /// tests record durations and return immediately.
-public protocol BackoffSleeper: Sendable {
+nonisolated public protocol BackoffSleeper: Sendable {
     nonisolated func sleep(seconds: Double) async throws
 }
 
@@ -29,7 +29,7 @@ nonisolated public struct SystemSleeper: BackoffSleeper {
 /// Supplies the random jitter fraction mixed into each backoff delay.
 /// Production is genuinely random; tests inject a fixed value so the
 /// resulting delay schedule is an exact, assertable sequence.
-public protocol JitterSource: Sendable {
+nonisolated public protocol JitterSource: Sendable {
     /// A value in `0..<1`. `0` means "no jitter added" (see
     /// `BackoffPolicy.delay(forAttempt:retryAfter:jitterFraction:)`).
     nonisolated func nextFraction() -> Double

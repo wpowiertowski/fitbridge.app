@@ -23,17 +23,17 @@ import SwiftData
 /// surviving it.
 final class InMemoryBackfillHorizonRecordStore: BackfillHorizonRecordStore, @unchecked Sendable {
     private let lock = NSLock()
-    private var storage: [String: BackfillHorizon] = [:]
+    private nonisolated(unsafe) var storage: [String: BackfillHorizon] = [:]
 
     init() {}
 
-    func completedHorizon(for type: GoogleDataType) -> BackfillHorizon? {
+    nonisolated func completedHorizon(for type: GoogleDataType) -> BackfillHorizon? {
         lock.lock()
         defer { lock.unlock() }
         return storage[type.rawValue]
     }
 
-    func setCompletedHorizon(_ horizon: BackfillHorizon?, for type: GoogleDataType) {
+    nonisolated func setCompletedHorizon(_ horizon: BackfillHorizon?, for type: GoogleDataType) {
         lock.lock()
         defer { lock.unlock() }
         storage[type.rawValue] = horizon
@@ -45,7 +45,7 @@ final class InMemoryBackfillHorizonRecordStore: BackfillHorizonRecordStore, @unc
 /// needing a real `SyncEngine`.
 final class StubBusyProbe: BackfillBusyProbe, @unchecked Sendable {
     private let lock = NSLock()
-    private var busyTypes: Set<GoogleDataType> = []
+    private nonisolated(unsafe) var busyTypes: Set<GoogleDataType> = []
 
     init(busy: Set<GoogleDataType> = []) {
         self.busyTypes = busy
@@ -57,7 +57,7 @@ final class StubBusyProbe: BackfillBusyProbe, @unchecked Sendable {
         lock.unlock()
     }
 
-    func isBusy(for type: GoogleDataType) async -> Bool {
+    nonisolated func isBusy(for type: GoogleDataType) async -> Bool {
         // `NSLock.lock()`/`.unlock()` are unavailable from `async` contexts
         // on this toolchain -- same finding WP-09's own
         // `MockGoogleReconcileClient.reconcile` documents; `withLock` is a

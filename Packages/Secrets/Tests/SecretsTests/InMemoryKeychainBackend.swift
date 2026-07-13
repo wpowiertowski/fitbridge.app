@@ -16,21 +16,21 @@ import Foundation
 /// Reachable only because `SecretsTests` uses `@testable import Secrets`.
 final class InMemoryKeychainBackend: KeychainBackend, @unchecked Sendable {
     private let lock = NSLock()
-    private var storage: [String: String] = [:]
+    private nonisolated(unsafe) var storage: [String: String] = [:]
 
-    func read(account: String) throws(SecretsError) -> String? {
+    nonisolated func read(account: String) throws(SecretsError) -> String? {
         lock.withLock { storage[account] }
     }
 
-    func allAccounts() throws(SecretsError) -> [String] {
+    nonisolated func allAccounts() throws(SecretsError) -> [String] {
         lock.withLock { Array(storage.keys) }
     }
 
-    func write(account: String, value: String) throws(SecretsError) {
+    nonisolated func write(account: String, value: String) throws(SecretsError) {
         lock.withLock { storage[account] = value }
     }
 
-    func erase(account: String) throws(SecretsError) {
+    nonisolated func erase(account: String) throws(SecretsError) {
         lock.lock()
         defer { lock.unlock() }
         storage.removeValue(forKey: account)

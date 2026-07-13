@@ -13,7 +13,7 @@
 /// Storage primitive `KeychainStore` is built on: get/set/delete/enumerate by
 /// a plain string account name. `KeychainStore` maps `SecretKey` to account
 /// strings; this protocol never sees anything richer than that.
-protocol KeychainBackend: Sendable {
+nonisolated protocol KeychainBackend: Sendable {
     /// Returns the UTF-8 string stored for `account`, or `nil` if absent.
     nonisolated func read(account: String) throws(SecretsError) -> String?
 

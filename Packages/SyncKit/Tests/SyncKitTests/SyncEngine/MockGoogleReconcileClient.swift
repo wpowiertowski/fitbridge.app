@@ -45,16 +45,16 @@ final class MockGoogleReconcileClient: GoogleReconcileClient, @unchecked Sendabl
     }
 
     private let lock = NSLock()
-    private var scripts: [Key: [Result<Page, GoogleHealthClientError>]] = [:]
-    private var callCounts: [Key: Int] = [:]
-    private var _calls: [RecordedCall] = []
+    private nonisolated(unsafe) var scripts: [Key: [Result<Page, GoogleHealthClientError>]] = [:]
+    private nonisolated(unsafe) var callCounts: [Key: Int] = [:]
+    private nonisolated(unsafe) var _calls: [RecordedCall] = []
 
     /// Optional rendezvous point: when set, every `reconcile` call suspends
     /// here (after being recorded, before returning its scripted result) --
     /// lets a test hold the *one* real network call open while it fires off
     /// additional concurrent `SyncEngine.sync(type:)` calls and proves they
     /// coalesce onto the same in-flight run rather than issuing their own.
-    var gate: AsyncGate?
+    nonisolated(unsafe) var gate: AsyncGate?
 
     init() {}
 
@@ -86,7 +86,7 @@ final class MockGoogleReconcileClient: GoogleReconcileClient, @unchecked Sendabl
         setScript(type: type, pageToken: pageToken, results: [.success(page)])
     }
 
-    func reconcile(
+    nonisolated func reconcile(
         type: GoogleDataType,
         since: Date,
         until: Date,
