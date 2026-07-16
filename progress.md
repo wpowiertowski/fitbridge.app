@@ -3105,3 +3105,83 @@ to activities yet); `DashboardView.syncNow` still syncs only the P0 four types (
 pre-existing WP-10/17 scoping, not changed here); and the real dual-wear device
 verification (test-plan.md §7's manual scripts), which remains gated on P-1.3's
 Google OAuth client like every other real-account check in this log.
+
+## WP-33 · Today view — Yacht club design
+
+Ported the locked Yacht club design (`Design/HealthLoomTodayView-YachtClub.swift` +
+`Design/healthloom-final-yachtclub.html`, architecture.md D12) into the app target as a
+new `HealthLoomApp/Today/` folder (8 files), started per the plan's own "can start
+visual work right after WP-10" clause -- WP-23 (ReadinessEngine) has not landed, so the
+readiness/coach bindings ship as the explicit pending states this WP's step 4 mandates
+anyway, never invented numbers. **Theme (`Theme.swift`):** the four Figma palette values
+and their derived roles ported token-for-token, with both D12-mandated deviations
+implemented: (a) Dynamic Type -- `Theme.font(_:_:relativeTo:)` wraps
+`Font.custom("Helvetica Neue", size:relativeTo:)` so every mockup size scales anchored
+to a semantically-matched text style; (b) a derived dark palette (canvas -> warm
+near-black #201D1A, ink -> light teal #A8CBD8 ~9.5:1, rust accent kept as a hue but
+lightened to #C98A63 ~5.7:1 since the original #733E24 sits near 2:1 on near-black),
+every token a UIColor dynamic-provider pair; hand-computed contrast figures are
+documented in the file header and flagged for WP-37's real audit.
+**TickScale (`TickScale.swift`):** mockup geometry verbatim (28 ticks, rust-below /
+gray-above / ink cursor), plus caller-supplied VoiceOver label/value ("Readiness, 82 of
+100" -- test-plan.md §6), input clamping, and a `nil`-value pending form (all-gray, no
+cursor) for the pre-readiness hero. **Data bindings (step 1):** sync-status header <-
+`@Query SyncState` (newest `lastSyncedAt`; device label from the newest
+`LocalSample.source`) through the pure `TodaySyncStatus` model with all three states --
+fresh (rust dot, "Fitbit Air · synced 9m ago"), stale >24 h (gray dot, "last synced 2d
+ago"), never-synced; metric rows <- HealthKit today-values via `TodayMetricsProvider`
+(cumulative sums since midnight for steps/distance/active energy -- source-merged, so
+D13.3's watch+Fitbit composition is honest -- latest-sample for HR/SpO2/weight,
+last-night asleep-stage sum for sleep; any per-kind read failure degrades to that row's
+"No data yet" state); readiness hero <- `ReadinessDisplay.pending` (the `.scored(score:
+delta:signalsUsed:)` case, including the "based on N of 4 signals" caption, is already
+plumbed so WP-23 binds without reshaping the view); coach panel <- placeholder copy
+(same rust-tint panel, no chevron) until WP-23/34 produce a `DailyInsight`.
+**Edit mode (step 2):** order + visibility live in `TodayMetricPreferences`
+(UserDefaults; one stored array of visible kinds in display order so order/visibility
+can't drift apart; absent key = the mockup's default four; unknown raw values dropped
+on load), edited via a themed sheet -- reorder through `List`/`.onMove` under an active
+`EditMode` (system drag handles), explicit minus/plus buttons for remove/add
+(deterministic for the UI test, single obvious VoiceOver affordance). The full metric
+list is the 7 kinds with a meaningful HealthKit "today" reading (heart, steps, sleep,
+blood oxygen, weight, distance, active energy); LocalSample-only types stay on the Data
+tab. **App shell:** new `HomeView` hosts the mockup's tab-bar component; `RootView`
+routes onboarded users to it (Today first), and the pre-existing `-UITestSeedData`
+route lands on the Data tab so every `DashboardUITests` assertion still finds
+`dashboard.syncNow` immediately -- zero churn there; `OnboardingUITests` gained exactly
+one tap (the Data tab) after onboarding completes. Onboarding's HealthKit read request
+(WP-12b's `requestRead`) widened to the Today metric kinds, same single sheet, same
+invisible-denial posture. **Deviations, all documented in code:** (1) the plan's
+"iOS 27 reorderable-content API" could not be verified in this environment (no SDK) --
+the sheet + `List`/`.onMove` path satisfies "no custom Edit-mode drag plumbing" and
+binds the same preferences store; swapping to in-place reorderable-content once
+buildable on the Mac is a contained view-only change; (2) the mockup's tab set
+(today/coach/you/settings) ships as Today/Data/Activities/Settings until P2/P3 build
+Coach and You -- dead tabs would be worse, and the swap is a two-line change in
+`HomeView`; (3) the mockup's "Good morning, Sam" renders without a name (none is
+collected anywhere); (4) steps goal is a constant 10,000 (`TodayMetricFormatter
+.defaultStepGoal`) pending a real goal setting. **Tests:**
+`HealthLoomTests/TodayMetricsTests.swift` (16 tests across three suites) -- the WP's
+required reorder-persistence unit test (move persists across instances), hide/show
+persistence, no-duplicate add, unknown-raw-value decode, absent-vs-empty key
+distinction; formatter goldens (grouped counts under an injected en_US locale,
+"7h 12m" durations, SpO2 fraction->percent, steps goal percent + capped progress bar,
+empty-row accessibility text); sync-status states incl. the exact 24 h boundary and the
+terse relative ages, plus greeting hours. `HealthLoomUITests/TodayUITests.swift` -- the
+WP's required edit-mode UI test: seeded launch -> Today tab -> asserts header/hero/
+coach/default rows -> add Weight, remove Sleep via the editor -> panel reflects both ->
+relaunch (without the new `-UITestResetTodayMetrics` flag, which the first launch uses
+to stay idempotent across runs) -> persisted order verified. **Deliberately deferred:**
+snapshot tests (test-plan.md §4 -- light/dark x Dynamic Type XS/XL) require adding the
+swift-snapshot-testing package, which this environment cannot resolve or build; flagged
+as the first Mac-side follow-up for this WP, alongside re-running the WP-37 contrast
+audit on the derived dark palette; readiness/coach real bindings (WP-23/34); a real
+step-goal setting; metric-row add/remove *of LocalSample-only types* (they have no
+"today" reading to render). **VERIFICATION -- same caveat as WP-12b's entry, read
+before trusting:** authored in a Linux remote container with no Swift toolchain or
+Xcode -- nothing compiled or test-executed here. All API use mirrors patterns already
+proven in this repo (`@Query`, `@Observable`+`@State`, dynamic UIColor, HK statistics/
+sample queries bridged via continuations identical to `HealthKitStore`'s), but
+`make test` on a Mac with the Xcode 27 beta remains the authoritative gate and must run
+before merge; likeliest fixups are isolation annotations and any SwiftUI API
+availability drift.

@@ -53,6 +53,12 @@ final class OnboardingUITests: XCTestCase {
         XCTAssertTrue(continueToDashboard.waitForExistence(timeout: 15), "First-sync completion screen never appeared")
         continueToDashboard.tap()
 
+        // WP-33: onboarding now lands on the Today tab of the new HomeView
+        // shell -- the sync dashboard this test asserts on is one tab away.
+        let dataTab = app.descendants(matching: .any)["tabbar.data"]
+        XCTAssertTrue(dataTab.waitForExistence(timeout: 10), "Tab bar never appeared after onboarding")
+        dataTab.tap()
+
         // Dashboard shows all 4 P0 types (test-plan.md §5 smoke test #1).
         // The List is lazily rendered, so the lower rows may need a scroll
         // into view before their accessibility elements exist (see

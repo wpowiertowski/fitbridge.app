@@ -117,6 +117,12 @@ final class AppEnvironment {
     init(launchConfiguration: LaunchConfiguration = .current) {
         self.launchConfiguration = launchConfiguration
 
+        // WP-33: UI-test launches can ask for a clean Today-panel metric
+        // order (see LaunchConfiguration.resetTodayMetrics's doc comment).
+        if launchConfiguration.resetTodayMetrics {
+            TodayMetricPreferences.reset()
+        }
+
         let container: ModelContainer
         do {
             container = try CoreModel.makeContainer(inMemory: launchConfiguration.useInMemoryContainer)

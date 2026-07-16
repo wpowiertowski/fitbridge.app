@@ -100,7 +100,16 @@ struct HealthKitPermissionView: View {
                 // read denial is invisible to the app by design (reads never
                 // reveal denial -- the resolver just sees no coverage and
                 // imports Fitbit data as before, D13's graceful floor).
-                try await appEnvironment.healthKitAuth.requestRead([.exercise, .heartRate])
+                //
+                // WP-33 widened this read set to the Today view's metric
+                // kinds (TodayMetricsProvider.swift) -- steps, sleep,
+                // weight, blood oxygen, distance, active energy -- same
+                // single sheet, same invisible-denial posture: a denied
+                // read just renders that row's "No data yet" state.
+                try await appEnvironment.healthKitAuth.requestRead([
+                    .exercise, .heartRate, .steps, .sleep, .weight,
+                    .oxygenSaturation, .distance, .activeEnergyBurned,
+                ])
                 isRequesting = false
                 onGranted()
             } catch {
