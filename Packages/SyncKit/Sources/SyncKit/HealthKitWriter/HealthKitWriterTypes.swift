@@ -13,6 +13,8 @@
 // `HealthKitWriter.swift` (which actually name `HK*` types) live behind
 // `#if canImport(HealthKit)`.
 
+import Foundation
+
 /// Error surface for `HealthKitWriter` and the `HealthStoreProtocol`
 /// implementations it drives. Mirrors `HealthKitAuthError`'s posture
 /// (WP-06/HealthKitAuthTypes.swift): every underlying `HKHealthStore` failure
@@ -37,6 +39,27 @@ public enum HealthKitWriterError: Error, Sendable, Equatable, CustomStringConver
         case .underlying(let message):
             return "HealthKitWriterError.underlying(\(message))"
         }
+    }
+}
+
+/// One app-written HealthKit object's identity + interval, as returned by
+/// `HealthStoreProtocol.appWrittenSampleRecords(ofType:start:end:)` (WP-12b /
+/// architecture.md D13.4). Retroactive conflict cleanup needs both the
+/// external ID (to delete by, same machinery as D4) *and* the sample's own
+/// interval (to test against the current coverage index) -- `existingExternalIDs`
+/// deliberately returns only the ID set, so this richer record type exists
+/// alongside it rather than widening that hot-path method. HealthKit-free
+/// (plain `String`/`Date`), per this file's header.
+nonisolated public struct AppWrittenSampleRecord: Sendable, Hashable {
+    /// `HKMetadataKeyExternalUUID` value -- the Google data-point ID.
+    public var externalID: String
+    public var start: Date
+    public var end: Date
+
+    public init(externalID: String, start: Date, end: Date) {
+        self.externalID = externalID
+        self.start = start
+        self.end = end
     }
 }
 

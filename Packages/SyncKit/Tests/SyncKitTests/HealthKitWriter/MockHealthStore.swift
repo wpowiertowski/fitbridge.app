@@ -42,6 +42,7 @@ final class MockHealthStore: HealthStoreProtocol, @unchecked Sendable {
     /// `HealthKitWriter`'s error propagation without needing a real HK failure.
     var saveError: HealthKitWriterError?
     var existingExternalIDsError: HealthKitWriterError?
+    var appWrittenSampleRecordsError: HealthKitWriterError?
     var deleteObjectsError: HealthKitWriterError?
     var deleteAllAppDataError: HealthKitWriterError?
 
@@ -103,6 +104,35 @@ final class MockHealthStore: HealthStoreProtocol, @unchecked Sendable {
                 && entry.sample.metadata?[HKMetadataKeyExternalUUID] != nil
         }
         return Set(matching.compactMap { $0.sample.metadata?[HKMetadataKeyExternalUUID] as? String })
+    }
+
+    /// WP-12b: mirrors `HealthKitStore.appWrittenSampleRecords`'s semantics
+    /// against the in-memory list -- same date-overlap rule as
+    /// `existingExternalIDs` above, plus the `isAppWritten` flag standing in
+    /// for the real adapter's `HKSource.default()` predicate (see this
+    /// file's header).
+    func appWrittenSampleRecords(
+        ofType sampleType: HKSampleType,
+        start: Date,
+        end: Date
+    ) async throws(HealthKitWriterError) -> [AppWrittenSampleRecord] {
+        if let appWrittenSampleRecordsError {
+            self.appWrittenSampleRecordsError = nil
+            throw appWrittenSampleRecordsError
+        }
+        return entries.compactMap { entry in
+            guard entry.isAppWritten,
+                  entry.sample.sampleType == sampleType,
+                  entry.sample.startDate < end,
+                  entry.sample.endDate > start,
+                  let externalID = entry.sample.metadata?[HKMetadataKeyExternalUUID] as? String
+            else { return nil }
+            return AppWrittenSampleRecord(
+                externalID: externalID,
+                start: entry.sample.startDate,
+                end: entry.sample.endDate
+            )
+        }
     }
 
     @discardableResult

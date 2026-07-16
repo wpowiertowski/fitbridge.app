@@ -46,6 +46,10 @@ nonisolated public struct SyncEngineLogRecorder: SyncRunRecording {
             dataType: outcome.dataType,
             status: outcome.status,
             itemCount: outcome.itemCount,
+            // WP-12b: nil (key absent) when nothing was deferred, so
+            // pre-existing entries and runs without watch conflicts render
+            // identically to before.
+            suppressedCount: outcome.suppressedCount > 0 ? outcome.suppressedCount : nil,
             errorMessage: outcome.errorMessage.map(SyncLogRedactor.redact)
         )
         await store.append(entry)

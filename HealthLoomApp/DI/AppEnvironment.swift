@@ -168,10 +168,31 @@ final class AppEnvironment {
         )
         self.syncLogStore = syncLogStore
 
+        // WP-12b: watch-priority conflict resolution (architecture.md D13),
+        // installed in the `conflictFilter:` seam WP-09 left on both
+        // pipelines. One shared coverage provider (a read-only HealthKit
+        // query source), but **one resolver per pipeline** -- the resolver
+        // holds per-run drain state (deferred-session links, suppressed
+        // counts), and `SyncEngine` runs can overlap `BackfillCoordinator`
+        // chunks, so sharing one instance would cross-contaminate their
+        // drains (WatchConflictResolver.swift's header documents this rule).
+        // Each resolver deletes conflicts through the same `HealthKitWriter`
+        // its pipeline writes through, keeping D4's idempotency story in one
+        // place. `UserDefaultsWatchPriorityPreference` reads the same key
+        // `SettingsView`'s "Prefer Apple Watch during workouts" toggle
+        // writes (`WatchPriorityPreferences`, Settings/) -- default ON.
+        let watchCoverageProvider = HealthKitWatchCoverageProvider()
+
+        let syncWriter = HealthKitWriter()
         let syncEngine = SyncEngine(
             client: reconcileClient,
-            writer: HealthKitWriter(),
+            writer: syncWriter,
             modelContainer: container,
+            conflictFilter: WatchConflictResolver(
+                coverageProvider: watchCoverageProvider,
+                writer: syncWriter,
+                preference: UserDefaultsWatchPriorityPreference()
+            ),
             runRecorder: SyncEngineLogRecorder(store: syncLogStore)
         )
         self.syncEngine = syncEngine
@@ -182,11 +203,17 @@ final class AppEnvironment {
         // pipelines dedupe against the exact same HealthKit data per
         // architecture.md D4. `syncEngine` doubles as the `BackfillBusyProbe`
         // (zero-code conformance, `SyncEngine+BackfillBusyProbe.swift`).
+        let backfillWriter = HealthKitWriter()
         self.backfillCoordinator = BackfillCoordinator(
             types: Self.backfillTypes,
             client: reconcileClient,
-            writer: HealthKitWriter(),
+            writer: backfillWriter,
             modelContainer: container,
+            conflictFilter: WatchConflictResolver(
+                coverageProvider: watchCoverageProvider,
+                writer: backfillWriter,
+                preference: UserDefaultsWatchPriorityPreference()
+            ),
             busyProbe: syncEngine
         )
 
@@ -264,6 +291,30 @@ final class AppEnvironment {
             start: Date().addingTimeInterval(-300 - 900),
             end: Date().addingTimeInterval(-300),
             source: "Fitbit Air"
+        ))
+
+        // WP-12b: one deferred Fitbit exercise session (architecture.md
+        // D13.2) so `ActivitiesUITests` can assert the consolidated
+        // Activities entry renders from a seeded container. The linked
+        // watch workout deliberately does NOT exist in the (empty
+        // simulator) HealthKit store -- exercising the view's documented
+        // unlinked-session fallback (ActivitiesModels.swift's header). The
+        // payload mirrors `SyncEngineLocalPayload`'s persisted shape:
+        // `sessionPayload` is the base64 of the Google Exercise session
+        // JSON (`ExerciseSessionDecoding.swift`'s wire shape).
+        let seedExerciseSession = Data(
+            #"{"exercise.activity_type":"run","exercise.distance":8000.0,"exercise.energy":520.0}"#.utf8
+        )
+        context.insert(LocalSample(
+            externalID: "seed-exercise-1",
+            dataType: GoogleDataType.exercise.rawValue,
+            payloadJSON: Data(
+                #"{"sessionPayload":"\#(seedExerciseSession.base64EncodedString())"}"#.utf8
+            ),
+            start: Date().addingTimeInterval(-2 * 3600 - 40 * 60),
+            end: Date().addingTimeInterval(-2 * 3600),
+            source: "Fitbit Air",
+            linkedWatchWorkoutUUID: UUID()
         ))
 
         try? context.save()

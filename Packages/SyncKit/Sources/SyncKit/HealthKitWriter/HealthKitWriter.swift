@@ -79,6 +79,18 @@ public final class HealthKitWriter: Sendable {
         try await store.existingExternalIDs(ofType: type, start: start, end: end)
     }
 
+    /// App-written sample records (external ID + interval) of `type` within
+    /// `[start, end]` -- WP-12b's retroactive conflict cleanup input
+    /// (architecture.md D13.4). Thin passthrough, same shape as
+    /// `existingExternalIDs` above.
+    public func appWrittenSampleRecords(
+        type: HKSampleType,
+        start: Date,
+        end: Date
+    ) async throws(HealthKitWriterError) -> [AppWrittenSampleRecord] {
+        try await store.appWrittenSampleRecords(ofType: type, start: start, end: end)
+    }
+
     /// Save `batch` with exactly **one** underlying HealthKit save call
     /// (architecture.md D4 / WP-08 step 3) — never one call per sample. A
     /// no-op for an empty batch (skips the round-trip entirely rather than

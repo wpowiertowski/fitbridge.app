@@ -108,6 +108,54 @@ nonisolated public protocol GoogleReconcileClient: Sendable {
 /// signature-breaking change later.
 nonisolated public protocol ConflictFiltering: Sendable {
     nonisolated func resolve(_ mapped: MappedObject, for point: GoogleDataPoint) async -> MappedObject
+
+    // WP-12b additions. All three have no-op default implementations (the
+    // extension below) so `IdentityConflictFilter` and every pre-existing
+    // test conformer keep compiling and behaving identically -- only
+    // `WatchConflictResolver` (Conflict/WatchConflictResolver.swift)
+    // implements them for real.
+
+    /// Called by `SyncEngine.performSync`/`BackfillCoordinator.pullMapWrite`
+    /// once at the start of each type's run, **before** the batched
+    /// existence query, with the run's full window. The real resolver
+    /// refreshes its per-run coverage cache here and performs D13.4's
+    /// retroactive cleanup (deleting app-written objects that now conflict
+    /// with watch coverage -- they're re-pulled and re-resolved by the very
+    /// window this call precedes). A thrown error fails the run (cursor
+    /// untouched, safely retried) -- but see `WatchConflictResolver
+    /// .beginRun`'s doc comment: coverage *read* failures degrade gracefully
+    /// instead of throwing; only cleanup *delete* failures propagate.
+    nonisolated func beginRun(
+        type: GoogleDataType,
+        windowStart: Date,
+        windowEnd: Date
+    ) async throws(HealthKitWriterError)
+
+    /// Drains (returns, then clears) the external-ID → watch-workout-UUID
+    /// links for every Google Exercise session `resolve` deferred to a watch
+    /// workout since the last drain (architecture.md D13.2). The caller
+    /// applies them to the matching `LocalSample` rows' `linkedWatchWorkoutUUID`
+    /// after its local upserts -- the resolver can't set the field itself
+    /// because the row doesn't exist yet when `resolve` runs.
+    nonisolated func drainDeferredSessionLinks() async -> [String: UUID]
+
+    /// Drains (returns, then clears) the count of data points `resolve`
+    /// suppressed -- fully or by splitting -- in favor of Apple Watch data
+    /// since the last drain. Surfaces in `SyncOutcome.suppressedCount` and
+    /// the sync log as "deferred to Apple Watch" (test-plan.md §2.3).
+    nonisolated func drainSuppressedCount() async -> Int
+}
+
+extension ConflictFiltering {
+    nonisolated public func beginRun(
+        type: GoogleDataType,
+        windowStart: Date,
+        windowEnd: Date
+    ) async throws(HealthKitWriterError) {}
+
+    nonisolated public func drainDeferredSessionLinks() async -> [String: UUID] { [:] }
+
+    nonisolated public func drainSuppressedCount() async -> Int { 0 }
 }
 
 /// P0 default (WP-09): identity. WP-12b installs the real watch-priority
@@ -140,12 +188,26 @@ nonisolated public struct SyncOutcome: Sendable, Equatable {
     /// the page that failed), though only a fully-successful run's count is
     /// added to the persisted `SyncState.itemCount`.
     public var itemCount: Int
+    /// WP-12b: data points suppressed this run in favor of Apple Watch data
+    /// (architecture.md D13.3's stream suppression + D13.2's deferred
+    /// sessions, drained from the run's `ConflictFiltering`). Rendered in
+    /// the sync log as "deferred to Apple Watch" (test-plan.md §2.3).
+    /// Defaults to 0 so every pre-WP-12b construction site compiles and
+    /// behaves identically.
+    public var suppressedCount: Int
     public var errorMessage: String?
 
-    public init(dataType: GoogleDataType, status: SyncStatus, itemCount: Int, errorMessage: String? = nil) {
+    public init(
+        dataType: GoogleDataType,
+        status: SyncStatus,
+        itemCount: Int,
+        suppressedCount: Int = 0,
+        errorMessage: String? = nil
+    ) {
         self.dataType = dataType
         self.status = status
         self.itemCount = itemCount
+        self.suppressedCount = suppressedCount
         self.errorMessage = errorMessage
     }
 }

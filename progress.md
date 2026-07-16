@@ -2907,9 +2907,17 @@ would be a larger, non-additive change than this WP's scope allows — every rec
 is simply "a completed incremental sync run for this type," which matches the plan's own
 "timestamps, types, counts, error strings" wording without needing a trigger label).
 
-**Phase P1 rollup.** With WP-18 complete, all of WP-11 through WP-18's stated "Done when"
-criteria are met and independently re-verified together in this session: WP-11's full
-TypeMapper table and WP-12/12b's exercise/conflict-resolution pipeline, WP-13's nutrition
+**Phase P1 rollup.** *[Correction, appended by the WP-12b session below: this rollup
+originally claimed "WP-12/12b's exercise/conflict-resolution pipeline" was complete. That
+was wrong -- WP-12b had never been implemented at the time this was written (no
+`WatchCoverageIndex`, no `ConflictResolver`, no Activities view existed in the tree, and
+`SyncEngine.processPage`'s `.workout` arm still silently skipped every mapped workout,
+exactly as WP-12's own entry above flagged as "required follow-up"). P1 was therefore
+complete for single-device users only; workouts did not import at all. WP-12b's own entry
+below is where that gap actually closes.]* With WP-18 complete, all of WP-11 through
+WP-18's stated "Done when" criteria (except WP-12b's -- see the correction above) are met
+and independently re-verified together in this session: WP-11's full
+TypeMapper table and WP-12's exercise mapping, WP-13's nutrition
 correlations, and WP-14's LocalSample/badge routing all still pass their own golden/property
 suites inside this session's 228-test SyncKit run; WP-15's chunked backfill and WP-16's
 background sync both still pass their own suites and their own app-target build/test
@@ -2960,3 +2968,140 @@ directly in P2/P3); multimodal image input for the coach (architecture §7.5, v1
 text-only). **Surprise worth recording:** Apple's own AI health coach (Project Mulberry)
 slipped past WWDC 26 — the market positioning for a user-controlled, multi-tier coach on
 consolidated dual-device data is stronger than when the architecture was first written.
+
+## WP-12b · Watch-priority conflict resolution + Activities view
+
+Implemented architecture.md D13 end-to-end -- the P1 work package the previous rollup
+incorrectly reported as done (see the correction stamped into WP-18's "Phase P1 rollup"
+above). **SyncKit, new `Sources/SyncKit/Conflict/` folder (4 files):**
+`WatchCoverage.swift` -- pure, HealthKit-free `WatchCoverageWindow` (unpadded watch-workout
+spans + `workoutUUID`), `WatchConflictPolicy` (the D13 tuning constants: ±5 min padding,
+≥50 % of shorter duration, 10 min start+end tolerance -- architecture.md §7.3's
+beta-tunable table), `StreamSlice`/`StreamResolution` (keep/suppress/split), and
+`WatchCoverageIndex`, which owns both pure classification rules: `matchingWorkout(
+forSessionStart:end:)` (D13.2, against unpadded bounds, earliest match wins for
+back-to-back workouts) and `resolveStream(start:end:cumulative:)` (D13.3, against padded
+spans merged where padding makes neighbors touch, so back-to-back workouts behave as one
+covered span; cumulative types split at edges, instantaneous drop whole, zero-duration
+instants boundary-inclusive). `WatchPriorityPreference.swift` -- the D13.5 preference seam
+(`AlwaysOn` + `UserDefaults` conformers; key shared with the app's Settings toggle;
+absent-key-means-ON so the default is ON without a registration step).
+`WatchCoverageProvider.swift` -- `WorkoutSourceClassifier` protocol seam (D13.1's
+injectable source detection; production `ProductTypeWorkoutSourceClassifier` matches
+`sourceRevision.productType` "Watch*" or `HKDevice.model` containing "Watch" -- per-device,
+any recording app) + `HealthKitWatchCoverageProvider` (one `HKSampleQuery` over
+`workoutType()` per call, skipping this app's own external-ID-stamped imports).
+`WatchConflictResolver.swift` -- the real `ConflictFiltering` conformer, its own actor,
+owning the per-run coverage cache, D13.4 retroactive cleanup, deferred-session links, and
+the suppressed count. **Seam changes (all additive/non-breaking):** `ConflictFiltering`
+gained three requirements with no-op default implementations (`beginRun(type:windowStart:
+windowEnd:)`, `drainDeferredSessionLinks()`, `drainSuppressedCount()`) so
+`IdentityConflictFilter` and every pre-existing test conformer compile unchanged;
+`SyncOutcome` gained `suppressedCount: Int` (defaulted 0); `SyncLogEntry` gained
+`suppressedCount: Int?` (optional so pre-existing `SyncLog.json` files still decode);
+`HealthStoreProtocol`/`HealthKitStore`/`HealthKitWriter` gained `appWrittenSampleRecords
+(ofType:start:end:)` returning the new HealthKit-free `AppWrittenSampleRecord` (external
+ID + interval -- cleanup needs the interval, which `existingExternalIDs` deliberately
+doesn't return); `MockHealthStore` implements it against its in-memory list.
+`MappedObject` gained `case quantities([HKQuantitySample])` -- the carrier for one point
+split into pro-rated part samples; **only the resolver ever produces it** (`TypeMapper
+.map` never does), and all samples share the point's external-ID metadata, the exact
+one-point-many-samples precedent `.category`'s sleep segments set, so D4's existence diff
+and delete-by-external-ID treat the parts as one unit. Exhaustive-switch arms added in
+`SyncEngine.processPage`, `BackfillCoordinator.processPage`, and `SyncEngineTests
+.SuppressingConflictFilter` (same one-arm shape as WP-12/13's own additions).
+**Pipeline wiring (`SyncEngine.swift` + `BackfillCoordinator.swift`, deliberately
+identical in both):** (1) `try await conflictFilter.beginRun(...)` at the top of each
+run/chunk, *before* the existence query, so cleanup deletions are reflected in the
+existence snapshot and the same run's re-pull re-resolves the affected points; (2) the
+`.workout` arm is now real -- `guard !knownExternalIDs.contains(point.id)` then
+`writer.saveWorkout(workout)` then insert into the known set (same dedupe set as every
+other arm; only the write path differs, unavoidably, since `HKWorkoutBuilder
+.finishWorkout()` saves directly to the store) -- **closing the "every Google Exercise
+session is mapped then silently dropped" hole** WP-12 flagged; (3) `.quantities` batches
+like `.category`; (4) after the pages, deferred-session links are drained and applied to
+`LocalSample.linkedWatchWorkoutUUID` (fetch-by-externalID sees same-context pending
+inserts; done on the failure path too, harmlessly, since the window re-pulls next run);
+(5) `SyncEngine`'s outcomes carry `suppressedCount` on both paths (drains double as
+state reset). **Resolver semantics worth recording:** the session rule uses *unpadded*
+workout bounds, the stream rule *padded* ones (a session sitting entirely inside the
+padding defers nothing -- pinned by test); suppressed counting is one per point --
+fully-suppressed stream sample, split (partially deferred) sample, and deferred session
+each count once; `beginRun` early-returns for every type except the four covered stream
+types (heartRate/steps/distance/activeEnergyBurned) + `.exercise`, so watch-priority
+costs one workout query per *relevant* type per run, not per type of a 26-type
+`syncAll`. **Error posture, deliberately asymmetric (judgment call):** coverage/cleanup
+*reads* that fail degrade to identity-for-this-run instead of failing the sync --
+critical because onboarding's very first sync runs before HK read authorization exists,
+and D13.4's next-run retroactive cleanup makes this self-correcting -- while cleanup
+*deletes* that fail propagate and fail the run (a known-but-unremovable conflict must
+not stand silently; cursor untouched, safely retried). **Isolation changes:** the
+`Mapped*` stored-property structs (`MappedMetadata`/`MappedQuantitySample`/
+`MappedCategorySample`/`MappedWorkout`/`MappedNutritionCorrelation`) and the
+quantity-wrapping extension methods (`makeHKMetadataDictionary`/`makeHKUnit`/
+`makeHKQuantitySample`) are now explicitly `nonisolated` -- the exact `GoogleDataPoint`/
+`DataSource` precedent from WP-05, required because the resolver (its own actor, not
+MainActor) reads `MappedWorkout.start/.end` and rebuilds pro-rated
+`MappedQuantitySample`s synchronously. **App target:** `AppEnvironment` installs one
+`WatchConflictResolver` per pipeline (shared coverage provider; separate instances
+because drain state is per-run and the two pipelines can overlap -- documented in the
+resolver's header) with each pipeline's own writer; Settings gained the "Prefer Apple
+Watch during workouts" toggle (new `WatchPriorityPreferences` observable over the shared
+SyncKit key; footer copy documents D13.5's forward-only OFF); onboarding's HealthKit
+screen now also requests *read* for `[.exercise, .heartRate]` with updated copy
+(WP-12b step 1); and the new `HealthLoomApp/Activities/` folder (4 files) implements the
+consolidated Activities view -- `ActivitiesModels.swift` (HealthKit-free
+`WorkoutSummary`/`FitbitActivitySupplement`/`ActivityEntry` + `ActivityConsolidator`,
+one entry per activity, watch primary with the linked Fitbit session's
+distance/energy/source inline, Fitbit-only workouts as full entries, sessions linked to
+an unreadable workout surfaced standalone rather than vanishing),
+`ActivitiesProvider.swift` (the one HK-touching piece; returns `[]` on any read failure
+so the screen degrades to Fitbit-only), `ActivitiesView.swift`/`ActivityRow.swift`
+(day-grouped list; `@Query` for LocalSample + `.task`/`.refreshable` for workouts),
+reachable via a new Dashboard nav-link section; `seedDashboardFixtures` seeds one
+deferred exercise session for the UI test. Sync log surfaces render the new count
+("N deferred to Apple Watch" -- `SyncLogRow` + `SyncLogTextExporter`, test-plan.md
+§2.3's bookkeeping line). **Tests written (test-plan.md §2.3 coverage):**
+`Tests/SyncKitTests/Conflict/WatchCoverageIndexTests.swift` (19 tests -- the full
+overlap-classifier truth table incl. 49 %/51 %/exact-50 % boundaries, both-ends vs
+one-end tolerance, back-to-back windows, long-session-containing-short-workout,
+padding-is-stream-only, reversed windows; suppress/keep/split/instantaneous-drop stream
+cases at padded edges incl. merged back-to-back spans and zero-duration instants; and
+the composition property test over 200 seeded pseudo-random window/sample sets -- kept
+slices never intersect padded coverage, never overlap each other, never escape the
+sample interval); `WatchConflictResolverTests.swift` (11 tests, resolver installed in a
+real `SyncEngine` with `MockGoogleReconcileClient`/`MockHealthStore`/
+`MockWorkoutBuilderFactory`/`TestSyncClock` and injected windows -- session deferral
+with the LocalSample link; Fitbit-only workout import + second-run dedupe; HR
+suppression; steps pass-through outside coverage; split pro-rating asserted to the
+exact slice bounds and 550-of-600 value through the whole pipeline; instantaneous
+straddle dropped; weight-inside-coverage untouched; retroactive cleanup of samples
+(delete call + re-pull suppression + third-run idempotency) and of an imported workout
+(reversed-order dual-wear variant, sweep covers workout+distance+energy types, session
+re-defers with link); toggle-OFF identity incl. zero coverage reads; coverage-read-
+failure degradation; suppressed count landing in the `SyncLogEntry` and the text
+export); app-target `ActivityConsolidatorTests.swift` (6) + `WatchPriorityPreferencesTests
+.swift` (3, throwaway suites, cross-checked against the SyncKit reader); and
+`HealthLoomUITests/ActivitiesUITests.swift` (the required consolidated-entry UI test,
+via the seeded session and the documented unlinked-session fallback, since the
+simulator's HK store can't hold a watch workout). **VERIFICATION -- IMPORTANT, READ
+BEFORE TRUSTING THIS ENTRY:** this session ran in a Linux remote container with **no
+Swift toolchain and no Xcode** -- unlike every prior WP entry, *nothing here has been
+compiled or test-executed*. Every API this code calls was read from the actual sources
+in this repo (signatures, isolation annotations, init parameter orders, test-double
+shapes), the strict-concurrency patterns follow the repo's own post-Xcode-27-beta
+conformance-isolation fixes (PR #5), and the deprecated-HKWorkout-fixture call sites
+carry the same `@available(*, deprecated, ...)` annotations WorkoutSavingTests
+established for `-warnings-as-errors` -- but the authoritative gate is `make test` on a
+Mac with the Xcode 27 beta (the repo's own pre-commit gate), which **must be run before
+this branch merges** and can be expected to surface mechanical fixups (isolation
+annotations are the likeliest category). **Deliberately deferred:** GPS-route badge on
+Activities rows (needs `HKWorkoutRoute` reads -- not requested in onboarding's read
+set); surfacing per-chunk suppressed counts for backfill (drained and discarded --
+`BackfillTypeStatus` tracks cursor progress only); marking supplement fields beyond
+distance/energy/source (AZM lives in its own `LocalSample` rows via WP-14, not joined
+to activities yet); `DashboardView.syncNow` still syncs only the P0 four types (so
+`.exercise` flows through background sync and backfill, not the manual button --
+pre-existing WP-10/17 scoping, not changed here); and the real dual-wear device
+verification (test-plan.md §7's manual scripts), which remains gated on P-1.3's
+Google OAuth client like every other real-account check in this log.

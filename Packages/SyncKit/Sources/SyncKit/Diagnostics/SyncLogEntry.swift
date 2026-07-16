@@ -32,6 +32,13 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
     /// comment (SyncEngine.swift) -- a count of Google data points
     /// processed, never a health value itself.
     public var itemCount: Int
+    /// WP-12b: data points this run deferred to Apple Watch data
+    /// (`SyncOutcome.suppressedCount` -- architecture.md D13, test-plan.md
+    /// §2.3's "suppressed counts appear in the sync log"). Optional, `nil`
+    /// when the run suppressed nothing, **and** so pre-WP-12b `SyncLog.json`
+    /// files (which lack the key entirely) still decode -- a count, never a
+    /// health value, same as `itemCount`.
+    public var suppressedCount: Int?
     /// Already redacted (never the raw error text) by the time an entry
     /// reaches this initializer in production -- see this file's header and
     /// `SyncLogRedactor.swift`.
@@ -43,6 +50,7 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
         dataType: GoogleDataType,
         status: SyncStatus,
         itemCount: Int,
+        suppressedCount: Int? = nil,
         errorMessage: String? = nil
     ) {
         self.id = id
@@ -50,6 +58,7 @@ nonisolated public struct SyncLogEntry: Sendable, Equatable, Codable, Identifiab
         self.dataType = dataType
         self.status = status
         self.itemCount = itemCount
+        self.suppressedCount = suppressedCount
         self.errorMessage = errorMessage
     }
 }

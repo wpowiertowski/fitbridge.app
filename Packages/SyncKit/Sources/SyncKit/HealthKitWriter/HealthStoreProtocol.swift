@@ -70,6 +70,20 @@ public protocol HealthStoreProtocol: Sendable {
         end: Date
     ) async throws(HealthKitWriterError) -> Set<String>
 
+    /// Every app-written, `healthloom`-stamped sample of `sampleType` whose
+    /// date range intersects `[start, end]`, returned with its external ID
+    /// *and* interval (WP-12b / architecture.md D13.4's retroactive conflict
+    /// cleanup -- it must test each written sample's interval against the
+    /// current watch-coverage index, which the ID-set-only
+    /// `existingExternalIDs` above can't support). Same single-query
+    /// invariant and same predicate scope (date window + external-ID
+    /// metadata + this app's own source) as `existingExternalIDs`.
+    func appWrittenSampleRecords(
+        ofType sampleType: HKSampleType,
+        start: Date,
+        end: Date
+    ) async throws(HealthKitWriterError) -> [AppWrittenSampleRecord]
+
     /// Delete every object of `objectType` whose `HKMetadataKeyExternalUUID`
     /// metadata value is a member of `externalIDs`. Deletes nothing else —
     /// in particular, samples of the same type with a different (or no)
@@ -150,6 +164,29 @@ public final class HealthKitStore: HealthStoreProtocol, Sendable {
         )
         let samples = try await querySamples(ofType: sampleType, matching: compound)
         return Set(samples.compactMap { $0.metadata?[HKMetadataKeyExternalUUID] as? String })
+    }
+
+    /// Identical predicate strategy (and single-query invariant) as
+    /// `existingExternalIDs(ofType:start:end:)` above -- the only difference
+    /// is what's read out of each returned sample: the external ID *plus*
+    /// its own start/end dates, for WP-12b's retroactive cleanup to test
+    /// against the current watch-coverage index (architecture.md D13.4).
+    public func appWrittenSampleRecords(
+        ofType sampleType: HKSampleType,
+        start: Date,
+        end: Date
+    ) async throws(HealthKitWriterError) -> [AppWrittenSampleRecord] {
+        let datePredicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+        let metadataPredicate = HKQuery.predicateForObjects(withMetadataKey: HKMetadataKeyExternalUUID)
+        let sourcePredicate = HKQuery.predicateForObjects(from: .default())
+        let compound = NSCompoundPredicate(
+            andPredicateWithSubpredicates: [datePredicate, metadataPredicate, sourcePredicate]
+        )
+        let samples = try await querySamples(ofType: sampleType, matching: compound)
+        return samples.compactMap { sample in
+            guard let externalID = sample.metadata?[HKMetadataKeyExternalUUID] as? String else { return nil }
+            return AppWrittenSampleRecord(externalID: externalID, start: sample.startDate, end: sample.endDate)
+        }
     }
 
     /// Uses `HKQuery.predicateForObjects(withMetadataKey:allowedValues:)` —

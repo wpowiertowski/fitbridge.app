@@ -39,6 +39,15 @@ struct SyncLogRow: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("synclog.row.\(entry.id).count")
+            // WP-12b: watch-priority suppression bookkeeping (architecture.md
+            // D13.3 / test-plan.md §2.3 -- "deferred to Apple Watch"). Only
+            // rendered when the run actually deferred something.
+            if let suppressedCount = entry.suppressedCount, suppressedCount > 0 {
+                Label("\(suppressedCount) deferred to Apple Watch", systemImage: "applewatch")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("synclog.row.\(entry.id).suppressed")
+            }
             if let errorMessage = entry.errorMessage {
                 Text(errorMessage)
                     .font(.footnote)
