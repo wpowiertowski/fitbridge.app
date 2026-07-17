@@ -20,14 +20,14 @@ concurrency:
 permissions:
   contents: read
 
-# iOS 27 retarget (2026-07): local dev is on the Xcode 27 beta / Swift 6.4,
-# but GitHub's macOS runners don't ship it yet (actions/runner-images#14196).
-# Package jobs stay pinned to an Xcode 26.x that IS on the image -- `swift
-# test` builds for the macOS host, and the manifests deliberately stay at
-# swift-tools-version 6.2, so those jobs are unaffected by the iOS 27 bump.
-# The app job needs the iOS 27 SDK, so it detects Xcode 27 on the runner and
-# skips with a ::warning until the image ships it (see the app job below and
-# implementation-plan.md "Toolchain note"). Available versions:
+# iOS 27 retarget (2026-07): local dev is on the Xcode 27 beta / Swift 6.4.
+# GitHub now ships the beta on a dedicated preview image with the `xcode-27`
+# runs-on label (actions/runner-images#14196), which the app job uses below.
+# Package jobs stay on macos-26 pinned to an Xcode 26.x that IS on that
+# image -- `swift test` builds for the macOS host, and the manifests
+# deliberately stay at swift-tools-version 6.2, so those jobs don't need the
+# preview image (see implementation-plan.md "Toolchain note").
+# Available versions:
 # https://github.com/actions/runner-images/blob/main/images/macos/macos-26-Readme.md
 env:
   XCODE_VERSION: "26.4.1"
@@ -68,33 +68,19 @@ jobs:
 
   app:
     name: xcodebuild build test (HealthLoom scheme)
-    runs-on: macos-26
+    # The app targets iOS 27, which needs the Xcode 27 beta's SDK. That ships
+    # on GitHub's dedicated `xcode-27` preview image (arm64, macOS 26.5;
+    # Xcode 27.0 beta is the image default), not on macos-26:
+    # https://github.com/actions/runner-images/blob/releases/xcode-27/20260715/images/macos/xcode-27-Readme.md
+    # Once Xcode 27 GA lands on the regular macos-26 image, move this job back
+    # there (WP-38 toolchain-finalization checklist item).
+    runs-on: xcode-27
     needs: packages
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      # The app targets iOS 27, which needs the Xcode 27 beta's SDK. The
-      # runner image doesn't ship it yet (actions/runner-images#14196), so
-      # detect it and skip the build -- loudly -- rather than fail. Remove
-      # this guard and pin XCODE_VERSION to 27.x once the image has it
-      # (WP-38 toolchain-finalization checklist item).
-      - name: Detect Xcode 27
-        id: xcode27
-        run: |
-          set -euo pipefail
-          latest=$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -n1 || true)
-          if [ -n "$latest" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            echo "path=$latest" >> "$GITHUB_OUTPUT"
-            echo "Found $latest"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=iOS 27 app build skipped::No Xcode 27 beta on this runner image yet (actions/runner-images#14196). Package tests above still ran. Build the app scheme locally with the Xcode 27 beta."
-          fi
-
       - name: Cache SwiftPM and SourcePackages
-        if: steps.xcode27.outputs.available == 'true'
         uses: actions/cache@v5
         with:
           path: |
@@ -106,15 +92,15 @@ jobs:
             ${{ runner.os }}-swiftpm-app-
 
       - name: Select Xcode 27
-        if: steps.xcode27.outputs.available == 'true'
-        run: sudo xcode-select -s "${{ steps.xcode27.outputs.path }}"
+        # Xcode 27.0 beta is the image default, but select it explicitly so a
+        # future default bump on the preview image can't silently change what
+        # we build with.
+        run: sudo xcode-select -s /Applications/Xcode_27.0.app
 
       - name: Show Xcode version
-        if: steps.xcode27.outputs.available == 'true'
         run: xcodebuild -version
 
       - name: Generate Xcode project (xcodegen)
-        if: steps.xcode27.outputs.available == 'true'
         run: |
           set -euo pipefail
           # xcodegen ships via Homebrew on GitHub's macOS runners; project.yml
@@ -127,7 +113,6 @@ jobs:
 
       - name: Select an available iOS Simulator runtime
         id: sim
-        if: steps.xcode27.outputs.available == 'true'
         run: |
           set -euo pipefail
           # Pick any available iPhone simulator; whichever iOS runtime the
@@ -145,7 +130,6 @@ jobs:
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       - name: Build + test HealthLoom scheme
-        if: steps.xcode27.outputs.available == 'true'
         run: |
           set -euo pipefail
           dest="platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}"
