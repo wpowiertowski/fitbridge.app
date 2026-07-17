@@ -90,47 +90,82 @@ final class OnboardingUITests: XCTestCase {
     /// shows no UI at all in that case and `requestWrite(for:)` resolves
     /// immediately.
     ///
-    /// Shape learned from two CI failures on the xcode-27 runner (PR #7):
+    /// Shape learned from three CI failures on the xcode-27 runner (PR #7):
     ///
     /// 1. On a cold CI simulator the sheet can take 15s+ to be presented
     ///    (run 1: two fixed 5s waits both closed before it appeared and it
     ///    then sat unhandled forever), so appearance gets one long polling
     ///    window rather than short fixed timeouts.
-    /// 2. "Turn On All" must be tapped **exactly once**: it's a toggle (run
-    ///    2's keep-tapping loop flipped the switches back off each pass and
-    ///    never got out of the sheet), and the tap must wait until the
-    ///    element is hittable (run 2's first tap landed mid-presentation-
-    ///    animation and failed with hit point {-1, -1}).
-    /// 3. Queries are typed `.buttons`, not `.any` + `firstMatch`: the
-    ///    `.any` query also matches the button's own `StaticText` label
-    ///    child, and XCUITest sometimes resolved `firstMatch` to that
-    ///    non-hittable text -- run 2 ultimately died with a fatal "Failed
-    ///    to get matching snapshot" when the StaticText went stale mid-tap.
+    /// 2. Queries must be identifier-only (`.any`), NOT typed `.buttons`:
+    ///    the iOS 27 beta's accessibility bridge reports unstable
+    ///    automation types for this out-of-process sheet (run 2's crash
+    ///    dump: "Automation type mismatch: computed Other from legacy
+    ///    attributes vs Toolbar/StaticText from modern attribute"). Run 3
+    ///    proved it: an `app.buttons["Turn On All"]` query matched nothing
+    ///    for 60 straight seconds while the sheet sat on screen; run 2's
+    ///    `.any` query on the same sheet matched within 13s.
+    /// 3. Taps go through screen coordinates (`tapCenter`), never
+    ///    `XCUIElement.tap()`: the `.any` firstMatch can resolve to the
+    ///    button's own StaticText label, on which tap()'s hittability +
+    ///    scroll-to-visible machinery first failed (hit point {-1, -1})
+    ///    and then fatally crashed the test ("Failed to get matching
+    ///    snapshot") when the element went stale mid-resolution (run 2).
+    ///    A center-coordinate tap lands on the enclosing control and does
+    ///    none of that resolution.
+    /// 4. "Turn On All" is idempotent, not a label-flipping toggle -- run
+    ///    2 landed four taps on it and its identifier persisted throughout
+    ///    -- so re-tapping it across retry iterations is safe. What run 2
+    ///    actually got wrong was never tapping "Allow" (its else-branch
+    ///    starved while "Turn On All" kept existing).
     @MainActor
     private func handleHealthKitPermissionSheetIfPresented(in app: XCUIApplication) {
         let googleSignIn = app.buttons["onboarding.google.signIn"]
-        let turnOnAll = app.buttons.matching(identifier: "Turn On All").firstMatch
-        let allow = app.buttons.matching(identifier: "Allow").firstMatch
+        let turnOnAll = app.descendants(matching: .any).matching(identifier: "Turn On All").firstMatch
+        let allow = app.descendants(matching: .any).matching(identifier: "Allow").firstMatch
 
         // Wait for whichever comes first: the sheet, or the next onboarding
         // screen (authorization already granted -- no sheet at all).
         guard waitUntil(timeout: 60, { googleSignIn.exists || turnOnAll.exists }),
               !googleSignIn.exists else { return }
 
-        // Tap "Turn On All" once, after it settles into place; XCUITest's
-        // own internal retry covers a residual animation race.
-        _ = waitUntil(timeout: 10) { turnOnAll.isHittable }
-        turnOnAll.tap()
+        // Let the presentation animation settle before the first tap; run
+        // 2's earliest tap landed mid-slide-in and missed.
+        pause(1.5)
 
-        // "Allow" starts disabled and enables once at least one switch is
-        // on (i.e. once the "Turn On All" tap above landed).
-        if allow.waitForExistence(timeout: 10) {
-            _ = waitUntil(timeout: 10) { allow.isEnabled }
-            allow.tap()
+        // Switches on, then "Allow" (disabled until at least one switch is
+        // on); retry the pair a bounded number of times in case a single
+        // synthesized tap is dropped by the beta's input path. Every
+        // iteration re-checks existence first, so once the sheet dismisses
+        // the loop stops touching it.
+        var attempts = 0
+        while !googleSignIn.exists && attempts < 6 {
+            if turnOnAll.exists {
+                tapCenter(of: turnOnAll)
+                pause(1)
+            }
+            if allow.exists {
+                tapCenter(of: allow)
+            }
+            _ = waitUntil(timeout: 3) { googleSignIn.exists }
+            attempts += 1
         }
-        // Sheet dismissal (and anything unexpected) is observed by the
-        // caller's own 30s wait for the Google screen -- on failure the
-        // uploaded xcresult carries the accessibility snapshots.
+        // Anything still unresolved is observed by the caller's own 30s
+        // wait for the Google screen -- on failure the uploaded xcresult
+        // carries the accessibility snapshots.
+    }
+
+    /// Taps the center of `element`'s current frame via a screen
+    /// coordinate -- see the doc comment above for why `tap()` is unsafe
+    /// against this sheet.
+    @MainActor
+    private func tapCenter(of element: XCUIElement) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    /// Spins the main run loop for `seconds` (UI-test-safe sleep).
+    @MainActor
+    private func pause(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
     }
 
     /// Polls `condition` on the main run loop until it's true or `timeout`
