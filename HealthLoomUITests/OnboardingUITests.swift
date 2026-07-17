@@ -85,46 +85,65 @@ final class OnboardingUITests: XCTestCase {
     /// dismissed, so `requestWrite(for:)` never resolved and every
     /// downstream screen timed out waiting to appear).
     ///
-    /// No-ops (the loop exits as soon as the Google screen shows) if
-    /// authorization was already granted by an earlier run on this
-    /// simulator -- HealthKit shows no UI at all in that case and
-    /// `requestWrite(for:)` resolves immediately.
+    /// No-ops (returns as soon as the Google screen shows) if authorization
+    /// was already granted by an earlier run on this simulator -- HealthKit
+    /// shows no UI at all in that case and `requestWrite(for:)` resolves
+    /// immediately.
     ///
-    /// Structured as a single polling loop rather than two fixed
-    /// `waitForExistence(timeout: 5)` windows: on CI's cold simulator the
-    /// sheet can take well over 5 seconds to be presented the first time
-    /// (healthd + the remote sheet process spin up from nothing; the same
-    /// run showed 8-15s just to set up the automation session), and once
-    /// both short windows had passed the sheet sat unhandled forever and
-    /// every downstream screen timed out -- exactly the failure seen on the
-    /// xcode-27 runner (PR #7). The loop instead keeps tapping whichever
-    /// control is currently present until the sheet resolves (the Google
-    /// screen appearing) or a generous overall deadline passes, at which
-    /// point the caller's own assert reports the failure.
+    /// Shape learned from two CI failures on the xcode-27 runner (PR #7):
+    ///
+    /// 1. On a cold CI simulator the sheet can take 15s+ to be presented
+    ///    (run 1: two fixed 5s waits both closed before it appeared and it
+    ///    then sat unhandled forever), so appearance gets one long polling
+    ///    window rather than short fixed timeouts.
+    /// 2. "Turn On All" must be tapped **exactly once**: it's a toggle (run
+    ///    2's keep-tapping loop flipped the switches back off each pass and
+    ///    never got out of the sheet), and the tap must wait until the
+    ///    element is hittable (run 2's first tap landed mid-presentation-
+    ///    animation and failed with hit point {-1, -1}).
+    /// 3. Queries are typed `.buttons`, not `.any` + `firstMatch`: the
+    ///    `.any` query also matches the button's own `StaticText` label
+    ///    child, and XCUITest sometimes resolved `firstMatch` to that
+    ///    non-hittable text -- run 2 ultimately died with a fatal "Failed
+    ///    to get matching snapshot" when the StaticText went stale mid-tap.
     @MainActor
     private func handleHealthKitPermissionSheetIfPresented(in app: XCUIApplication) {
-        // `.firstMatch` on each: a plain `.any` query for "Allow" matches
-        // both the button and its own label's `StaticText` child (both
-        // report "Allow"), which XCUITest refuses to disambiguate on `.tap()`
-        // -- observed directly against the real simulator run.
-        let turnOnAll = app.descendants(matching: .any).matching(identifier: "Turn On All").firstMatch
-        let allow = app.descendants(matching: .any).matching(identifier: "Allow").firstMatch
         let googleSignIn = app.buttons["onboarding.google.signIn"]
-        let deadline = Date().addingTimeInterval(60)
-        while Date() < deadline {
-            // Sheet dismissed (or never shown): requestWrite resolved and
-            // onboarding advanced past the HealthKit step.
-            if googleSignIn.exists { return }
-            // "Allow" starts disabled and stays disabled until at least one
-            // switch is on -- tap "Turn On All" first whenever it's still
-            // present; tapping a disabled "Allow" is a harmless no-op the
-            // next iteration retries after "Turn On All" landed.
-            if turnOnAll.exists {
-                turnOnAll.tap()
-            } else if allow.exists {
-                allow.tap()
-            }
-            _ = googleSignIn.waitForExistence(timeout: 1)
+        let turnOnAll = app.buttons.matching(identifier: "Turn On All").firstMatch
+        let allow = app.buttons.matching(identifier: "Allow").firstMatch
+
+        // Wait for whichever comes first: the sheet, or the next onboarding
+        // screen (authorization already granted -- no sheet at all).
+        guard waitUntil(timeout: 60, { googleSignIn.exists || turnOnAll.exists }),
+              !googleSignIn.exists else { return }
+
+        // Tap "Turn On All" once, after it settles into place; XCUITest's
+        // own internal retry covers a residual animation race.
+        _ = waitUntil(timeout: 10) { turnOnAll.isHittable }
+        turnOnAll.tap()
+
+        // "Allow" starts disabled and enables once at least one switch is
+        // on (i.e. once the "Turn On All" tap above landed).
+        if allow.waitForExistence(timeout: 10) {
+            _ = waitUntil(timeout: 10) { allow.isEnabled }
+            allow.tap()
         }
+        // Sheet dismissal (and anything unexpected) is observed by the
+        // caller's own 30s wait for the Google screen -- on failure the
+        // uploaded xcresult carries the accessibility snapshots.
+    }
+
+    /// Polls `condition` on the main run loop until it's true or `timeout`
+    /// elapses. A hand-rolled loop instead of `XCTNSPredicateExpectation`
+    /// so the condition can touch `XCUIElement` state without escaping
+    /// main-actor isolation (this target compiles with strict concurrency).
+    @MainActor
+    private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        return true
     }
 }

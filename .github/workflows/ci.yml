@@ -100,18 +100,7 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
-      - name: Generate Xcode project (xcodegen)
-        run: |
-          set -euo pipefail
-          # xcodegen ships via Homebrew on GitHub's macOS runners; project.yml
-          # is the committed source of truth, the .xcodeproj itself is not
-          # committed here (unlike lumivault.app, which commits its .xcodeproj
-          # directly -- HealthLoom deliberately regenerates it in CI instead,
-          # to avoid .pbxproj merge conflicts across parallel work streams).
-          brew install xcodegen
-          xcodegen generate
-
-      - name: Select an available iOS Simulator runtime
+      - name: Select and pre-boot an iOS Simulator
         id: sim
         run: |
           set -euo pipefail
@@ -134,7 +123,30 @@ jobs:
             exit 1
           fi
           echo "Selected simulator: $(xcrun simctl list devices available | grep -F "$udid")"
+          # Kick off the boot now, without waiting, so springboard warms up
+          # while xcodegen and the ~5 min build below run. Launching the
+          # first UI-tested app on a cold-booting simulator timed out at
+          # xcodebuild's launch deadline ("Timed out while launching
+          # application via Xcode", PR #7 run 2) -- the simulator only
+          # started booting when the first test asked it to.
+          xcrun simctl boot "$udid" 2>/dev/null || true
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Xcode project (xcodegen)
+        run: |
+          set -euo pipefail
+          # xcodegen ships via Homebrew on GitHub's macOS runners; project.yml
+          # is the committed source of truth, the .xcodeproj itself is not
+          # committed here (unlike lumivault.app, which commits its .xcodeproj
+          # directly -- HealthLoom deliberately regenerates it in CI instead,
+          # to avoid .pbxproj merge conflicts across parallel work streams).
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Wait for simulator boot to finish
+        # Usually instant -- the boot started before the build. `-b` boots
+        # first if the earlier async boot somehow didn't stick.
+        run: xcrun simctl bootstatus "${{ steps.sim.outputs.udid }}" -b
 
       - name: Build + test HealthLoom scheme
         run: |
