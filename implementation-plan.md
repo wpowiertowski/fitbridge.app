@@ -19,9 +19,14 @@ dedicated `xcode-27` preview runner image (actions/runner-images#14196), so the 
 runs `xcodebuild build test` there unconditionally (the skip guard is gone); the
 per-package `swift test` jobs stay on `macos-26` with Xcode 26.x (they build for the
 macOS host, so 6.2 keeps them green without the preview image). Local development uses
-the Xcode 27 beta (Swift 6.4 compiler). Remaining WP-38 launch-checklist work: flip
-manifests to 6.4 and move the app job from the preview image back to the regular
-macOS image once Xcode 27 goes GA there.
+the Xcode 27 beta (Swift 6.4 compiler). The XCUITest suite is temporarily skipped in
+CI (`-skip-testing:HealthLoomUITests`): the preview image's iOS 27 beta 3 runtime does
+not deliver XCUITest-synthesized taps to the out-of-process HealthKit permission sheet
+(com.apple.HealthPrivacyService), so the onboarding test cannot pass there (diagnosis
+in PR #7); UI tests still build in CI and still run locally via `make test`. Remaining
+WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI once a
+newer beta lands on the runner image, and move the app job from the preview image back
+to the regular macOS image once Xcode 27 goes GA there.
 
 ---
 
