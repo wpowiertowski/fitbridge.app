@@ -57,7 +57,8 @@ final class DashboardUITests: XCTestCase {
         // accessibility elements don't exist until scrolled into view.
         // Observed directly against the real simulator run: `weight`/`sleep`
         // were simply absent from the accessibility snapshot before
-        // scrolling.
+        // scrolling. Scrolling happens in small increments (see
+        // ScrollUntilExists.swift) so the row can't be overshot and evicted.
         scrollUntilExists(anyElement["dashboard.row.weight.name"], in: app)
 
         // weight: seeded "idle" (never synced) -- no error row, "Never synced" text.
@@ -95,7 +96,7 @@ final class DashboardUITests: XCTestCase {
         // The "Not in Apple Health" section sits below the four P0 rows --
         // scroll until each row is materialized (same virtualized-List
         // reasoning as the P0 test above).
-        scrollUntilExists(anyElement["dashboard.localRow.electrocardiogram.name"], in: app, maxAttempts: 10)
+        scrollUntilExists(anyElement["dashboard.localRow.electrocardiogram.name"], in: app)
 
         // ECG: clinical -- both badges render.
         XCTAssertTrue(anyElement["dashboard.localRow.electrocardiogram.name"].exists)
@@ -104,7 +105,7 @@ final class DashboardUITests: XCTestCase {
         XCTAssertEqual(anyElement["dashboard.localRow.electrocardiogram.itemCount"].label, "1")
 
         // Irregular Rhythm Notification: clinical -- both badges render.
-        scrollUntilExists(anyElement["dashboard.localRow.irregular_rhythm_notification.name"], in: app, maxAttempts: 10)
+        scrollUntilExists(anyElement["dashboard.localRow.irregular_rhythm_notification.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.irregular_rhythm_notification.name"].exists)
         XCTAssertEqual(
             anyElement["dashboard.localRow.irregular_rhythm_notification.badge"].label,
@@ -114,27 +115,16 @@ final class DashboardUITests: XCTestCase {
 
         // Active Zone Minutes: not clinical -- "Not in Apple Health" badge
         // only, no clinical indicator.
-        scrollUntilExists(anyElement["dashboard.localRow.active_zone_minutes.name"], in: app, maxAttempts: 10)
+        scrollUntilExists(anyElement["dashboard.localRow.active_zone_minutes.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.active_zone_minutes.name"].exists)
         XCTAssertEqual(anyElement["dashboard.localRow.active_zone_minutes.badge"].label, "Not in Apple Health")
         XCTAssertFalse(anyElement["dashboard.localRow.active_zone_minutes.clinicalBadge"].exists)
 
         // Active Minutes: not clinical -- same as Active Zone Minutes.
-        scrollUntilExists(anyElement["dashboard.localRow.active_minutes.name"], in: app, maxAttempts: 10)
+        scrollUntilExists(anyElement["dashboard.localRow.active_minutes.name"], in: app)
         XCTAssertTrue(anyElement["dashboard.localRow.active_minutes.name"].exists)
         XCTAssertEqual(anyElement["dashboard.localRow.active_minutes.badge"].label, "Not in Apple Health")
         XCTAssertFalse(anyElement["dashboard.localRow.active_minutes.clinicalBadge"].exists)
     }
 
-    /// Swipes up (revealing lower List rows a virtualized SwiftUI List
-    /// hasn't materialized yet) up to a handful of times until `element`
-    /// exists, or gives up -- the subsequent assertion reports the failure.
-    @MainActor
-    private func scrollUntilExists(_ element: XCUIElement, in app: XCUIApplication, maxAttempts: Int = 5) {
-        var attempts = 0
-        while !element.exists && attempts < maxAttempts {
-            app.swipeUp()
-            attempts += 1
-        }
-    }
 }

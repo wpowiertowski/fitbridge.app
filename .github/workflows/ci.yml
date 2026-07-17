@@ -115,18 +115,25 @@ jobs:
         id: sim
         run: |
           set -euo pipefail
-          # Pick any available iPhone simulator; whichever iOS runtime the
-          # runner's Xcode ships is fine as long as it satisfies the app's
-          # deploymentTarget (27.0).
-          udid=$(xcrun simctl list devices available \
-            | grep -E 'iPhone' \
-            | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
-            | head -n1)
+          # Prefer the largest iPhone model available, deterministically,
+          # instead of `head -n1` of whatever simctl lists first: the UI
+          # tests' scroll-into-view assertions depend on what fits above the
+          # fold, so an arbitrary (possibly small) device made CI diverge
+          # from local runs. Whichever iOS runtime the runner's Xcode ships
+          # is fine as long as it satisfies the deploymentTarget (27.0).
+          udid=""
+          for name in "iPhone 17 Pro Max" "iPhone 17 Pro" "iPhone 17" "iPhone"; do
+            udid=$(xcrun simctl list devices available \
+              | grep -F "$name" \
+              | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' \
+              | head -n1) && [ -n "$udid" ] && break
+          done
           if [ -z "$udid" ]; then
             echo "::error::No available iPhone simulator found on this runner." >&2
             xcrun simctl list devices available
             exit 1
           fi
+          echo "Selected simulator: $(xcrun simctl list devices available | grep -F "$udid")"
           echo "udid=$udid" >> "$GITHUB_OUTPUT"
 
       - name: Build + test HealthLoom scheme
@@ -137,5 +144,18 @@ jobs:
             -project HealthLoom.xcodeproj \
             -scheme HealthLoom \
             -destination "$dest" \
+            -resultBundlePath "$RUNNER_TEMP/HealthLoom.xcresult" \
             SWIFT_TREAT_WARNINGS_AS_ERRORS=YES \
             GCC_TREAT_WARNINGS_AS_ERRORS=YES
+
+      # UI-test failures are near-impossible to diagnose from stdout alone
+      # (element-not-found waits log no hierarchy; the accessibility
+      # snapshots and screenshots land in the result bundle) -- keep the
+      # bundle when the job fails.
+      - name: Upload xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: HealthLoom.xcresult
+          path: ${{ runner.temp }}/HealthLoom.xcresult
+          if-no-files-found: ignore
