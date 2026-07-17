@@ -14,14 +14,19 @@ clients or SSE parsing anywhere in this plan.
 
 **Toolchain note (temporary, revisit before launch):** package manifests stay at
 `// swift-tools-version: 6.2` — that is a *minimum*, parses under both Xcode 26 and 27,
-and nothing here needs 6.4-only manifest APIs. GitHub's macOS runners do not yet ship
-the Xcode 27 beta (actions/runner-images#14196), so keeping 6.2 keeps the per-package
-`swift test` CI jobs green (they build for the macOS host); the app job requires the
-iOS 27 SDK and auto-skips with a warning until the runner image ships Xcode 27. Local
-development uses the Xcode 27 beta (Swift 6.4 compiler). The real app build/test gate in
-the meantime is the local `pre-commit` hook (`make test`, pinned to the Xcode 27 beta via
-`DEVELOPER_DIR`) -- CI's skip isn't a coverage gap in practice. Flipping manifests to 6.4
-and un-guarding CI is a WP-38 launch-checklist item.
+and nothing here needs 6.4-only manifest APIs. GitHub now ships the Xcode 27 beta on a
+dedicated `xcode-27` preview runner image (actions/runner-images#14196), so the app job
+runs `xcodebuild build test` there unconditionally (the skip guard is gone); the
+per-package `swift test` jobs stay on `macos-26` with Xcode 26.x (they build for the
+macOS host, so 6.2 keeps them green without the preview image). Local development uses
+the Xcode 27 beta (Swift 6.4 compiler). The XCUITest suite is temporarily skipped in
+CI (`-skip-testing:HealthLoomUITests`): the preview image's iOS 27 beta 3 runtime does
+not deliver XCUITest-synthesized taps to the out-of-process HealthKit permission sheet
+(com.apple.HealthPrivacyService), so the onboarding test cannot pass there (diagnosis
+in PR #7); UI tests still build in CI and still run locally via `make test`. Remaining
+WP-38 launch-checklist work: flip manifests to 6.4, re-enable UI tests in CI once a
+newer beta lands on the runner image, and move the app job from the preview image back
+to the regular macOS image once Xcode 27 goes GA there.
 
 ---
 
@@ -795,9 +800,10 @@ sync memory profile on a 1-year backfill (Instruments — no unbounded page accu
 - [ ] Google OAuth verification **approved** for Restricted scopes (started in P-1).
 - [ ] **PCC entitlement granted** (applied in P-1.5); PCC quota behavior verified on a
       real iCloud account; app degrades correctly if the entitlement lapses.
-- [ ] Toolchain finalization: CI un-guarded onto Xcode 27 (GA or runner-image beta —
-      see Toolchain note), package manifests bumped to `swift-tools-version: 6.4`,
-      built against the iOS 27 GA SDK.
+- [ ] Toolchain finalization: ~~CI un-guarded onto Xcode 27~~ (done 2026-07 — app job
+      runs on the `xcode-27` preview image, see Toolchain note); still open: package
+      manifests bumped to `swift-tools-version: 6.4`, built against the iOS 27 GA SDK,
+      app job moved back to the regular macOS image once Xcode 27 GA ships there.
 - [ ] App Review prep: HealthKit usage strings accurate; demo video of Google consent for
       review notes; privacy nutrition label (Health & Fitness data — linked-to-user? no
       tracking) covering PCC and BYO-key tiers; non-medical disclaimer surfaced in

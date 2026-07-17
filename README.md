@@ -134,10 +134,10 @@ xcodebuild test -project HealthLoom.xcodeproj \
 ## Requirements
 
 - iOS 27 or later
-- Xcode 27 beta or later, on an Apple Silicon Mac (to build from source). Note: GitHub's
-  hosted macOS runners don't ship the Xcode 27 beta yet, so CI's package `swift test`
-  jobs run on Xcode 26.x (the manifests deliberately stay at `swift-tools-version: 6.2`)
-  and the app-scheme job auto-skips until the runner image adds it — see the Toolchain
+- Xcode 27 beta or later, on an Apple Silicon Mac (to build from source). In CI, the
+  app-scheme job runs on GitHub's `xcode-27` preview runner image (Xcode 27 beta,
+  iOS 27 simulators); the package `swift test` jobs run on `macos-26` with Xcode 26.x
+  (the manifests deliberately stay at `swift-tools-version: 6.2`) — see the Toolchain
   note in [implementation-plan.md](implementation-plan.md)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`) — `project.yml` is the source of truth; the `.xcodeproj` is not committed
 - A Google Cloud OAuth client for the Google Health API (see [google-health-healthkit-base-knowledge.md](google-health-healthkit-base-knowledge.md))

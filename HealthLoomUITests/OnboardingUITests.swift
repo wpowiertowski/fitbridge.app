@@ -46,27 +46,23 @@ final class OnboardingUITests: XCTestCase {
         handleHealthKitPermissionSheetIfPresented(in: app)
 
         let signIn = app.buttons["onboarding.google.signIn"]
-        XCTAssertTrue(signIn.waitForExistence(timeout: 15), "Google consent screen never appeared")
+        XCTAssertTrue(signIn.waitForExistence(timeout: 30), "Google consent screen never appeared")
         signIn.tap()
 
         let continueToDashboard = app.buttons["onboarding.firstSync.continue"]
-        XCTAssertTrue(continueToDashboard.waitForExistence(timeout: 15), "First-sync completion screen never appeared")
+        XCTAssertTrue(continueToDashboard.waitForExistence(timeout: 30), "First-sync completion screen never appeared")
         continueToDashboard.tap()
 
         // Dashboard shows all 4 P0 types (test-plan.md §5 smoke test #1).
         // The List is lazily rendered, so the lower rows may need a scroll
         // into view before their accessibility elements exist (see
-        // DashboardUITests.swift's `scrollUntilExists` for the same, more
-        // fully commented, workaround).
+        // ScrollUntilExists.swift for the shared, fully commented,
+        // incremental-scroll workaround).
         let anyElement = app.descendants(matching: .any)
         XCTAssertTrue(anyElement["dashboard.syncNow"].waitForExistence(timeout: 10))
         for rawValue in ["steps", "heart_rate", "weight", "sleep"] {
             let element = anyElement["dashboard.row.\(rawValue).name"]
-            var scrollAttempts = 0
-            while !element.exists && scrollAttempts < 5 {
-                app.swipeUp()
-                scrollAttempts += 1
-            }
+            scrollUntilExists(element, in: app)
             XCTAssertTrue(
                 element.waitForExistence(timeout: 5),
                 "Dashboard missing row for \(rawValue)"
@@ -89,22 +85,133 @@ final class OnboardingUITests: XCTestCase {
     /// dismissed, so `requestWrite(for:)` never resolved and every
     /// downstream screen timed out waiting to appear).
     ///
-    /// No-ops (both waits time out quickly) if authorization was already
-    /// granted by an earlier run on this simulator -- HealthKit shows no UI
-    /// at all in that case and `requestWrite(for:)` resolves immediately.
+    /// No-ops (returns as soon as the Google screen shows) if authorization
+    /// was already granted by an earlier run on this simulator -- HealthKit
+    /// shows no UI at all in that case and `requestWrite(for:)` resolves
+    /// immediately.
+    ///
+    /// Shape learned from four CI failures on the xcode-27 runner (PR #7),
+    /// the last diagnosed from the run's xcresult accessibility dumps:
+    ///
+    /// 1. On a cold CI simulator the sheet can take 15s+ to be presented
+    ///    (run 1: two fixed 5s waits both closed before it appeared and it
+    ///    then sat unhandled forever), so appearance gets one long polling
+    ///    window rather than short fixed timeouts.
+    /// 2. **The sheet is hosted by a separate process,
+    ///    `com.apple.HealthPrivacyService`** (run 4's hierarchy dumps; the
+    ///    real control tree is: Cell `UIA.Health.AuthSheet.AllCategoryButton`
+    ///    containing the 'Turn On All' StaticText, one Switch per type at
+    ///    `UIA.Health.Write.<Type>.SwitchCell.Switch`, and
+    ///    `UIA.Health.Allow.Button` / `UIA.Health.DoNotAllow.Button`).
+    ///    Cross-process *queries* through the app's tree resolve fine, but
+    ///    taps synthesized via the app's automation session never register
+    ///    in the sheet process: run 4 landed clean coordinate taps on
+    ///    "Turn On All" and "Allow" across six iterations, yet all 245
+    ///    hierarchy snapshots in the xcresult still showed every switch at
+    ///    value 0 and the Allow button Disabled. Same pattern as
+    ///    springboard permission alerts -- interaction has to go through
+    ///    an `XCUIApplication` attached to the sheet's own host process.
+    /// 3. The iOS 27 beta's accessibility bridge reports unstable
+    ///    automation types through the app's tree (run 2: "Automation type
+    ///    mismatch"; run 3: a typed `.buttons` query matched nothing for
+    ///    60s), so anything read through `app` stays identifier-only
+    ///    `.any`; typed queries are safe only against the sheet host's own
+    ///    tree.
     @MainActor
     private func handleHealthKitPermissionSheetIfPresented(in app: XCUIApplication) {
-        // `.firstMatch` on each: a plain `.any` query for "Allow" matches
-        // both the button and its own label's `StaticText` child (both
-        // report "Allow"), which XCUITest refuses to disambiguate on `.tap()`
-        // -- observed directly against the real simulator run.
-        let turnOnAll = app.descendants(matching: .any).matching(identifier: "Turn On All").firstMatch
-        if turnOnAll.waitForExistence(timeout: 5) {
-            turnOnAll.tap()
+        let googleSignIn = app.buttons["onboarding.google.signIn"]
+        let sheet = XCUIApplication(bundleIdentifier: "com.apple.HealthPrivacyService")
+        let turnOnAll = sheet.cells["UIA.Health.AuthSheet.AllCategoryButton"]
+        let allow = sheet.buttons["UIA.Health.Allow.Button"]
+        // Appearance is detected through the app's tree (those queries DO
+        // see the remote subtree, and this also covers the no-sheet
+        // already-authorized case via the Google screen check).
+        let sheetInAppTree = app.descendants(matching: .any)
+            .matching(identifier: "UIA.Health.AuthSheet.AllCategoryButton").firstMatch
+
+        guard waitUntil(timeout: 60, { googleSignIn.exists || sheetInAppTree.exists }),
+              !googleSignIn.exists else { return }
+
+        // Let the presentation animation settle before the first tap; run
+        // 2's earliest tap landed mid-slide-in and missed.
+        pause(1.5)
+
+        var attempts = 0
+        while !googleSignIn.exists && attempts < 4 {
+            if sheet.state == .runningForeground || sheet.state == .runningBackground {
+                // Preferred path: drive the sheet in its own process.
+                if turnOnAll.exists {
+                    turnOnAll.tap()
+                    pause(1)
+                }
+                // Belt and braces: flip any switch "Turn On All" left off
+                // ("Turn On All" is idempotent -- run 2 landed four taps on
+                // it and its label never flipped -- so re-tries are safe).
+                for type in ["Steps", "Weight", "HeartRate", "Sleep"] {
+                    let sw = sheet.switches["UIA.Health.Write.\(type).SwitchCell.Switch"]
+                    if sw.exists, isOff(sw) {
+                        sw.tap()
+                    }
+                }
+                if allow.exists && allow.isEnabled {
+                    allow.tap()
+                }
+            } else if sheetInAppTree.exists {
+                // Fallback if the sheet host isn't attachable on this OS:
+                // coordinate taps through the app's tree (known to at least
+                // synthesize cleanly, per run 4).
+                tapCenter(of: sheetInAppTree)
+                pause(1)
+                let allowInAppTree = app.descendants(matching: .any)
+                    .matching(identifier: "UIA.Health.Allow.Button").firstMatch
+                if allowInAppTree.exists {
+                    tapCenter(of: allowInAppTree)
+                }
+            }
+            _ = waitUntil(timeout: 3) { googleSignIn.exists }
+            attempts += 1
         }
-        let allow = app.descendants(matching: .any).matching(identifier: "Allow").firstMatch
-        if allow.waitForExistence(timeout: 5) {
-            allow.tap()
+        if !googleSignIn.exists {
+            // Put the tree in the job's stdout so the next CI failure is
+            // diagnosable straight from the log, without the xcresult.
+            NSLog("HealthKit sheet never resolved; sheet-host state: %ld; app tree:\n%@",
+                  sheet.state.rawValue, app.debugDescription)
         }
+    }
+
+    /// `XCUIElement.value` for a Switch is "0"/"1", modeled as String or
+    /// NSNumber depending on the bridge -- accept either.
+    @MainActor
+    private func isOff(_ element: XCUIElement) -> Bool {
+        (element.value as? String) == "0" || (element.value as? NSNumber)?.intValue == 0
+    }
+
+    /// Taps the center of `element`'s current frame via a screen
+    /// coordinate, bypassing tap()'s hittability + scroll-to-visible
+    /// resolution (which both missed and fatally crashed against the
+    /// app-tree view of this sheet in run 2).
+    @MainActor
+    private func tapCenter(of element: XCUIElement) {
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+    }
+
+    /// Spins the main run loop for `seconds` (UI-test-safe sleep).
+    @MainActor
+    private func pause(_ seconds: TimeInterval) {
+        RunLoop.current.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    /// Polls `condition` on the main run loop until it's true or `timeout`
+    /// elapses. A hand-rolled loop instead of `XCTNSPredicateExpectation`
+    /// so the condition can touch `XCUIElement` state without escaping
+    /// main-actor isolation (this target compiles with strict concurrency).
+    @MainActor
+    private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline { return false }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        return true
     }
 }

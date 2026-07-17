@@ -8,7 +8,7 @@ XCODE_BETA := /Applications/Xcode-beta.app/Contents/Developer
 
 test:
 	@test -d "$(XCODE_BETA)" || { \
-		echo "error: $(XCODE_BETA) not found -- the app target needs the iOS 27 SDK from the Xcode 27 beta, and GitHub's macos-26 runner doesn't ship it yet, so this is the only real gate for it. Install the Xcode 27 beta." >&2; \
+		echo "error: $(XCODE_BETA) not found -- the app target needs the iOS 27 SDK from the Xcode 27 beta. Install the Xcode 27 beta." >&2; \
 		exit 1; \
 	}
 	@for pkg in CoreModel Secrets GoogleHealthClient SyncKit CoachKit; do \
