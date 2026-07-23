@@ -128,12 +128,15 @@ struct HeroInstrument: View {
                     .font(Theme.font(12, .regular, relativeTo: .caption))
                     .foregroundStyle(Theme.secondary)
             } else {
-                (Text(delta >= 0 ? "+\(delta)" : "\(delta)")
+                // iOS 26 deprecated `Text + Text`; interpolating pre-styled
+                // Text values preserves each run's own font/color.
+                let deltaText = Text(delta >= 0 ? "+\(delta)" : "\(delta)")
                     .font(Theme.font(12, .semibold, relativeTo: .caption))
                     .foregroundStyle(Theme.ink)
-                    + Text(" vs 30-day average")
+                let averageText = Text(" vs 30-day average")
                     .font(Theme.font(12, .regular, relativeTo: .caption))
-                    .foregroundStyle(Theme.secondary))
+                    .foregroundStyle(Theme.secondary)
+                Text("\(deltaText)\(averageText)")
             }
         }
     }
