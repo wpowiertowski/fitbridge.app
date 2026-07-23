@@ -38,7 +38,7 @@ import Foundation
 /// against the real SDK, don't guess" discipline WP-06/07 already applied
 /// to `HKObjectType`/`HKCategoryValueSleepAnalysis` -- see progress.md's
 /// WP-11 entry for the exact commands run.
-public enum MappedUnit: Sendable, Hashable {
+nonisolated public enum MappedUnit: Sendable, Hashable {
     /// `HKUnit.count()` -- steps, floors (flights climbed).
     case count
     /// `HKUnit.count().unitDivided(by: .minute())` -- heart rate (bpm),
@@ -105,7 +105,7 @@ public enum MappedUnit: Sendable, Hashable {
 /// WP-07 step 3's stage map: `awake`→`.awake`, `light`→`.asleepCore`,
 /// `deep`→`.asleepDeep`, `rem`→`.asleepREM`, any other/unrecognized stage
 /// string→`.asleepUnspecified`.
-public enum MappedSleepStage: Int, Sendable, Hashable, CaseIterable {
+nonisolated public enum MappedSleepStage: Int, Sendable, Hashable, CaseIterable {
     case asleepUnspecified = 1
     case awake = 2
     case asleepCore = 3
@@ -229,7 +229,7 @@ nonisolated public struct MappedCategorySample: Sendable, Hashable {
 /// is where the "~13 Google types" themselves are documented, since
 /// base-knowledge.md's §5 mapping-table row names no exact wire values --
 /// only "~13 Google types are coarse."
-public enum MappedWorkoutActivityType: Sendable, Hashable, CaseIterable {
+nonisolated public enum MappedWorkoutActivityType: Sendable, Hashable, CaseIterable {
     case running
     case walking
     case cycling
@@ -371,7 +371,7 @@ nonisolated public struct MappedNutritionCorrelation: Sendable, Hashable {
 /// `TypeMapper.decide(_:)`'s pure result -- see `MappedObject`
 /// (MappedObject.swift) for the HealthKit-wrapping counterpart
 /// `TypeMapper.map(_:)` derives from this.
-public enum MappedDecision: Sendable, Hashable {
+nonisolated public enum MappedDecision: Sendable, Hashable {
     case quantity(MappedQuantitySample)
     case category([MappedCategorySample])
     /// WP-12: one Google Exercise session -> one `HKWorkout`. Unlike
