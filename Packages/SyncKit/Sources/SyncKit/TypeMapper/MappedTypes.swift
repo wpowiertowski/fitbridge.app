@@ -38,7 +38,7 @@ import Foundation
 /// against the real SDK, don't guess" discipline WP-06/07 already applied
 /// to `HKObjectType`/`HKCategoryValueSleepAnalysis` -- see progress.md's
 /// WP-11 entry for the exact commands run.
-public enum MappedUnit: Sendable, Hashable {
+nonisolated public enum MappedUnit: Sendable, Hashable {
     /// `HKUnit.count()` -- steps, floors (flights climbed).
     case count
     /// `HKUnit.count().unitDivided(by: .minute())` -- heart rate (bpm),
@@ -105,7 +105,7 @@ public enum MappedUnit: Sendable, Hashable {
 /// WP-07 step 3's stage map: `awake`→`.awake`, `light`→`.asleepCore`,
 /// `deep`→`.asleepDeep`, `rem`→`.asleepREM`, any other/unrecognized stage
 /// string→`.asleepUnspecified`.
-public enum MappedSleepStage: Int, Sendable, Hashable, CaseIterable {
+nonisolated public enum MappedSleepStage: Int, Sendable, Hashable, CaseIterable {
     case asleepUnspecified = 1
     case awake = 2
     case asleepCore = 3
@@ -115,7 +115,17 @@ public enum MappedSleepStage: Int, Sendable, Hashable, CaseIterable {
 
 /// Idempotency + provenance metadata stamped on every emitted sample
 /// (architecture.md §4 D4; WP-07 step 4).
-public struct MappedMetadata: Sendable, Hashable {
+///
+/// `nonisolated` (WP-12b, applied to every stored-property struct in this
+/// file): these are pure `Sendable` value types, but under this package's
+/// `.defaultIsolation(MainActor.self)` their stored properties would
+/// otherwise be MainActor-isolated members -- the exact gotcha WP-05 hit
+/// with `GoogleDataPoint`/`DataSource` and solved the same way (see
+/// progress.md's WP-04/05 entry). WP-12b's `WatchConflictResolver` (its own
+/// actor, not MainActor) reads `MappedWorkout.start/.end` and rebuilds
+/// pro-rated `MappedQuantitySample` copies, which requires synchronous
+/// member access from off the main actor.
+nonisolated public struct MappedMetadata: Sendable, Hashable {
     /// `HKMetadataKeyExternalUUID` value -- the Google data-point ID
     /// (`GoogleDataPoint.id`). This is the key `HealthKitWriter` (WP-08) will
     /// query against via `HKQuery.predicateForObjects(withMetadataKey:
@@ -144,7 +154,7 @@ public struct MappedMetadata: Sendable, Hashable {
 
 /// Pure, HealthKit-free description of one `HKQuantitySample` `TypeMapper`
 /// decided to emit.
-public struct MappedQuantitySample: Sendable, Hashable {
+nonisolated public struct MappedQuantitySample: Sendable, Hashable {
     /// `HKQuantityTypeIdentifier` rawValue, e.g.
     /// `"HKQuantityTypeIdentifierStepCount"` -- always one of
     /// `GoogleDataType.writability`'s `.healthKit` strings (CoreModel's
@@ -176,7 +186,7 @@ public struct MappedQuantitySample: Sendable, Hashable {
 /// Pure, HealthKit-free description of one `HKCategorySample` stage segment
 /// `TypeMapper` decided to emit (WP-07 step 3: a sleep session maps to an
 /// array of these).
-public struct MappedCategorySample: Sendable, Hashable {
+nonisolated public struct MappedCategorySample: Sendable, Hashable {
     /// `HKCategoryTypeIdentifier` rawValue, e.g.
     /// `"HKCategoryTypeIdentifierSleepAnalysis"`.
     public var healthKitIdentifier: String
@@ -219,7 +229,7 @@ public struct MappedCategorySample: Sendable, Hashable {
 /// is where the "~13 Google types" themselves are documented, since
 /// base-knowledge.md's §5 mapping-table row names no exact wire values --
 /// only "~13 Google types are coarse."
-public enum MappedWorkoutActivityType: Sendable, Hashable, CaseIterable {
+nonisolated public enum MappedWorkoutActivityType: Sendable, Hashable, CaseIterable {
     case running
     case walking
     case cycling
@@ -250,7 +260,7 @@ public enum MappedWorkoutActivityType: Sendable, Hashable, CaseIterable {
 /// by a redundant third wire field). Distance/energy are optional -- Google's
 /// session payload may or may not report either (WP-12: "attach distance/
 /// energy quantity samples if present").
-public struct MappedWorkout: Sendable, Hashable {
+nonisolated public struct MappedWorkout: Sendable, Hashable {
     public var activityType: MappedWorkoutActivityType
     public var start: Date
     public var end: Date
@@ -302,7 +312,7 @@ public struct MappedWorkout: Sendable, Hashable {
 /// differently-keyed) meal identifier, only `TypeMapper.decideNutritionLog`
 /// needs to change (add a grouping step upstream); this struct's shape
 /// (a correlation's worth of constituents) would still apply.
-public struct MappedNutritionCorrelation: Sendable, Hashable {
+nonisolated public struct MappedNutritionCorrelation: Sendable, Hashable {
     /// `HKCorrelationTypeIdentifier` rawValue --
     /// `"HKCorrelationTypeIdentifierFood"`, the exact sentinel string
     /// CoreModel's `GoogleDataType.writability` already declares for both
@@ -361,7 +371,7 @@ public struct MappedNutritionCorrelation: Sendable, Hashable {
 /// `TypeMapper.decide(_:)`'s pure result -- see `MappedObject`
 /// (MappedObject.swift) for the HealthKit-wrapping counterpart
 /// `TypeMapper.map(_:)` derives from this.
-public enum MappedDecision: Sendable, Hashable {
+nonisolated public enum MappedDecision: Sendable, Hashable {
     case quantity(MappedQuantitySample)
     case category([MappedCategorySample])
     /// WP-12: one Google Exercise session -> one `HKWorkout`. Unlike

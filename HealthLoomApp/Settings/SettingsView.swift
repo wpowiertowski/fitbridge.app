@@ -39,6 +39,8 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppEnvironment.self) private var appEnvironment
     @State private var preferences = SyncPreferences()
+    // WP-12b: "Prefer Apple Watch during workouts" (architecture.md D13.5).
+    @State private var watchPriority = WatchPriorityPreferences()
     private let consentPresenter = IncrementalConsentPresenter()
 
     @State private var pendingTypes: Set<GoogleDataType> = []
@@ -62,6 +64,23 @@ struct SettingsView: View {
             Section {
                 NavigationLink("Sync Log", destination: SyncLogView())
                     .accessibilityIdentifier("settings.synclog.link")
+            }
+
+            // WP-12b (architecture.md D13.5): watch-priority conflict
+            // resolution toggle, default ON. The footer copy documents the
+            // one asymmetry D13.5 mandates: OFF is forward-only (previously
+            // skipped data isn't restored), ON cleans up duplicates on the
+            // next sync (D13.4's retroactive pass).
+            Section {
+                Toggle(isOn: Binding(
+                    get: { watchPriority.isEnabled },
+                    set: { watchPriority.setEnabled($0) }
+                )) {
+                    Text("Prefer Apple Watch during workouts")
+                }
+                .accessibilityIdentifier("settings.watchPriority.toggle")
+            } footer: {
+                Text("When on, activities your Apple Watch recorded win: overlapping Fitbit workouts and their heart rate, steps, energy, and distance aren't duplicated into Apple Health -- the Fitbit session is kept in HealthLoom as a supplement instead. Turning this off doesn't restore data that was already skipped; turning it back on removes duplicates on the next sync.")
             }
 
             ForEach(groupedByScope, id: \.scope) { group in

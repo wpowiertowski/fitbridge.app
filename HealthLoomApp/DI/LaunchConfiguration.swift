@@ -31,6 +31,13 @@ struct LaunchConfiguration: Sendable {
     var seedDashboardData: Bool
     var useInMemoryContainer: Bool
     var initialRouteIsDashboard: Bool
+    /// WP-33: `-UITestResetTodayMetrics` clears the persisted Today-panel
+    /// metric order at launch (`TodayMetricPreferences.reset`) so
+    /// `TodayUITests` starts from the default four on every run --
+    /// `UserDefaults.standard` outlives UI-test launches on a simulator,
+    /// and the test's own relaunch leg deliberately omits this flag to
+    /// verify real persistence.
+    var resetTodayMetrics: Bool
 
     static var current: LaunchConfiguration {
         let arguments = ProcessInfo.processInfo.arguments
@@ -41,7 +48,8 @@ struct LaunchConfiguration: Sendable {
             stubGoogle: stubGoogle,
             seedDashboardData: seedDashboardData,
             useInMemoryContainer: isUITest,
-            initialRouteIsDashboard: seedDashboardData
+            initialRouteIsDashboard: seedDashboardData,
+            resetTodayMetrics: arguments.contains("-UITestResetTodayMetrics")
         )
     }
 }

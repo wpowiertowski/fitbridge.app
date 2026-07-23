@@ -583,9 +583,10 @@ import Testing
             switch mapped {
             case .quantity, .category:
                 return .localOnly
-            case .workout, .correlation, .localOnly, .skip:
-                // WP-12 added `.workout`; WP-13 added `.correlation`. This
-                // test predates both and isn't about them, so it passes them
+            case .workout, .correlation, .quantities, .localOnly, .skip:
+                // WP-12 added `.workout`; WP-13 added `.correlation`; WP-12b
+                // added `.quantities` (split cumulative samples). This test
+                // predates all three and isn't about them, so it passes them
                 // through unchanged, same as `.localOnly`/`.skip`.
                 return mapped
             }

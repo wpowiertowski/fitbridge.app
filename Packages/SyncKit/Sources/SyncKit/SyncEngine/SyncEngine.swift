@@ -190,6 +190,16 @@ public actor SyncEngine {
 
         var totalItemCount = 0
         do {
+            // WP-12b: give the conflict filter its per-run window *before*
+            // the existence query below -- the real resolver
+            // (`WatchConflictResolver`) refreshes its watch-coverage cache
+            // here and performs D13.4's retroactive cleanup (deleting
+            // app-written objects that now conflict with coverage), so the
+            // existence snapshot taken next already reflects those
+            // deletions and the run's own re-pull re-resolves the affected
+            // points. The default `IdentityConflictFilter` no-ops.
+            try await conflictFilter.beginRun(type: type, windowStart: windowStart, windowEnd: windowEnd)
+
             var knownExternalIDs: Set<String> = []
             if let hkSampleType {
                 // One batched existence query per (type, window) --
@@ -216,6 +226,15 @@ public actor SyncEngine {
                 pageToken = page.nextPageToken
             } while pageToken != nil
 
+            // WP-12b: apply deferred-session links (external ID -> watch
+            // workout UUID) to the LocalSample rows the pages above
+            // upserted -- the resolver records the link at `resolve` time,
+            // but the row only exists after `upsertLocalSample` ran
+            // (fetches see pending inserts in the same context). Identity
+            // filter drains nothing.
+            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(), context: context)
+            let suppressedCount = await conflictFilter.drainSuppressedCount()
+
             // Full window succeeded (every page fetched, mapped, and
             // written/upserted without throwing) -- advance the cursor and
             // commit this run's count.
@@ -224,10 +243,20 @@ public actor SyncEngine {
             syncState.lastError = nil
             syncState.itemCount += totalItemCount
             try? context.save()
-            let outcome = SyncOutcome(dataType: type, status: .ok, itemCount: totalItemCount)
+            let outcome = SyncOutcome(
+                dataType: type, status: .ok, itemCount: totalItemCount, suppressedCount: suppressedCount
+            )
             await runRecorder?.record(outcome) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.
             return outcome
         } catch {
+            // WP-12b: same drains on the failure path -- partial-run links
+            // still point at rows already upserted (harmless and correct to
+            // apply; the window is fully re-pulled next run regardless), and
+            // draining the count both reports partial progress and resets
+            // the resolver's state so nothing leaks into the next run.
+            applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(), context: context)
+            let suppressedCount = await conflictFilter.drainSuppressedCount()
+
             // Partial-window failure: `lastSyncedAt` is deliberately left
             // untouched (architecture.md D3) so the *entire* window --
             // including whatever pages already succeeded this run -- is
@@ -237,7 +266,13 @@ public actor SyncEngine {
             syncState.lastStatus = SyncStatus.error.rawValue
             syncState.lastError = message
             try? context.save()
-            let outcome = SyncOutcome(dataType: type, status: .error, itemCount: totalItemCount, errorMessage: message)
+            let outcome = SyncOutcome(
+                dataType: type,
+                status: .error,
+                itemCount: totalItemCount,
+                suppressedCount: suppressedCount,
+                errorMessage: message
+            )
             await runRecorder?.record(outcome) // WP-18: additive diagnostics hook, see this actor's `runRecorder` doc comment.
             return outcome
         }
@@ -257,6 +292,7 @@ public actor SyncEngine {
         var newExternalIDs: [String] = []
         var localOnlyPoints: [GoogleDataPoint] = []
         var skipCount = 0
+        var workoutCount = 0
 
         for point in points {
             // `await`: `TypeMapper.map(_:)` is MainActor-isolated (see this
@@ -267,6 +303,15 @@ public actor SyncEngine {
             case .quantity(let sample):
                 guard !knownExternalIDs.contains(point.id) else { continue }
                 batch.append(sample)
+                newExternalIDs.append(point.id)
+            case .quantities(let samples):
+                // WP-12b: a cumulative sample split at watch-coverage edges
+                // (`WatchConflictResolver`, architecture.md D13.3) -- N part
+                // samples for one point, all sharing `point.id`'s external-ID
+                // metadata, exactly `.category`'s existing one-point-many-
+                // samples shape. One point, one itemCount contribution.
+                guard !knownExternalIDs.contains(point.id) else { continue }
+                batch.append(contentsOf: samples)
                 newExternalIDs.append(point.id)
             case .category(let samples):
                 guard !knownExternalIDs.contains(point.id) else { continue }
@@ -287,23 +332,26 @@ public actor SyncEngine {
                 guard !knownExternalIDs.contains(point.id) else { continue }
                 batch.append(correlation)
                 newExternalIDs.append(point.id)
-            case .workout:
-                // WP-12 added `MappedObject.workout` (Exercise ->
-                // `HKWorkout`). Wiring workouts through this pipeline --
-                // a `HKObjectType.workoutType()` existence-diff before
-                // calling `writer.saveWorkout(_:)`, since workouts don't
-                // flow through the `writer.save(batch)` path above at all
-                // (`HKWorkoutBuilder.finishWorkout()` saves directly to the
-                // store, see HealthKitWriter.swift's `saveWorkout` doc
-                // comment) -- is out of WP-12's stated scope (`SyncEngine/`
-                // isn't one of its listed files, and D13's conflict
-                // resolution arguably needs to run before a Google Exercise
-                // session is even considered for writing, which is WP-12b's
-                // job). Flagged in progress.md as required follow-up.
-                // Counted as skipped for now, matching this switch's
-                // existing "don't crash on a decision this pipeline doesn't
-                // handle yet" posture.
-                skipCount += 1
+            case .workout(let workout):
+                // WP-12b: the follow-up WP-12 flagged, now wired. A workout
+                // reaching this arm has already passed D13's conflict
+                // resolution (the `conflictFilter.resolve` call above
+                // downgrades watch-covered sessions to `.localOnly` before
+                // they ever get here), so anything left is a genuine
+                // Fitbit-only activity. Dedupe uses the exact same
+                // per-(type, window) existence set as every other arm --
+                // `knownExternalIDs` was queried against
+                // `HKObjectType.workoutType()` for `.exercise` runs (the
+                // writability table's `"HKWorkoutType"` sentinel resolves to
+                // it); only the *write* path differs, unavoidably:
+                // `HKWorkoutBuilder.finishWorkout()` saves directly to the
+                // store (HealthKitWriter.swift's `saveWorkout` doc comment),
+                // so a saved workout is inserted into `knownExternalIDs`
+                // immediately rather than batched.
+                guard !knownExternalIDs.contains(point.id) else { continue }
+                _ = try await writer.saveWorkout(workout)
+                knownExternalIDs.insert(point.id)
+                workoutCount += 1
             case .localOnly:
                 localOnlyPoints.append(point)
             case .skip:
@@ -320,7 +368,24 @@ public actor SyncEngine {
             upsertLocalSample(for: point, context: context)
         }
 
-        return newExternalIDs.count + localOnlyPoints.count + skipCount
+        return newExternalIDs.count + workoutCount + localOnlyPoints.count + skipCount
+    }
+
+    /// WP-12b (architecture.md D13.2): stamp `LocalSample.linkedWatchWorkoutUUID`
+    /// for every session the run's conflict filter deferred to a watch
+    /// workout. Fetch-by-externalID sees the rows `upsertLocalSample`
+    /// inserted earlier in this same context (pending inserts are visible to
+    /// `FetchDescriptor` by default). A link whose row is missing (e.g. the
+    /// page that would have upserted it failed mid-run) is dropped silently
+    /// -- the window is fully re-pulled next run and the link re-recorded.
+    private func applyDeferredSessionLinks(_ links: [String: UUID], context: ModelContext) {
+        guard !links.isEmpty else { return }
+        for (externalID, workoutUUID) in links {
+            let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
+            if let sample = try? context.fetch(descriptor).first {
+                sample.linkedWatchWorkoutUUID = workoutUUID
+            }
+        }
     }
 
     // MARK: - SwiftData bookkeeping

@@ -35,7 +35,7 @@ struct HealthKitPermissionView: View {
                 .foregroundStyle(.red)
             Text("Connect Apple Health")
                 .font(.title.bold())
-            Text("HealthLoom needs permission to write your steps, heart rate, weight, and sleep data to Apple Health.")
+            Text("HealthLoom needs permission to write your steps, heart rate, weight, and sleep data to Apple Health. It also asks to read your workouts and heart rate so activities your Apple Watch already recorded aren't double-counted when your Fitbit data arrives.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -90,6 +90,26 @@ struct HealthKitPermissionView: View {
         Task {
             do {
                 try await appEnvironment.healthKitAuth.requestWrite(for: AppEnvironment.p0Types)
+                // WP-12b (architecture.md D13.1): read access to workouts +
+                // heart rate so `WatchCoverageIndex` can detect Apple Watch
+                // recording windows -- the copy above explains why. One
+                // combined system sheet would be nicer, but `requestWrite`/
+                // `requestRead` are deliberately separate `HealthKitAuth`
+                // APIs (WP-06 shaped them for incremental read requests);
+                // HealthKit shows a single sheet per request anyway, and a
+                // read denial is invisible to the app by design (reads never
+                // reveal denial -- the resolver just sees no coverage and
+                // imports Fitbit data as before, D13's graceful floor).
+                //
+                // WP-33 widened this read set to the Today view's metric
+                // kinds (TodayMetricsProvider.swift) -- steps, sleep,
+                // weight, blood oxygen, distance, active energy -- same
+                // single sheet, same invisible-denial posture: a denied
+                // read just renders that row's "No data yet" state.
+                try await appEnvironment.healthKitAuth.requestRead([
+                    .exercise, .heartRate, .steps, .sleep, .weight,
+                    .oxygenSaturation, .distance, .activeEnergyBurned,
+                ])
                 isRequesting = false
                 onGranted()
             } catch {

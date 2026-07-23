@@ -36,6 +36,17 @@ public enum MappedObject: Sendable {
     /// .makeHKCorrelation()` at the bottom of this file), so it follows the
     /// same "construct it right here" precedent as `.quantity`/`.category`.
     case correlation(HKCorrelation)
+    /// WP-12b: several `HKQuantitySample`s standing in for **one** Google
+    /// data point -- produced **only** by `WatchConflictResolver` when a
+    /// cumulative stream sample (steps / distance / active energy) is split
+    /// at watch-coverage edges with its value pro-rated (architecture.md
+    /// D13.3; test-plan.md §2.3). `TypeMapper.map(_:)` itself never emits
+    /// this case. All samples share the originating point's external-ID
+    /// metadata -- exactly the same one-point-many-samples precedent
+    /// `.category`'s sleep-stage segments established in WP-07, so the
+    /// existence diff and delete-by-external-ID (D4) treat the split parts
+    /// as one unit.
+    case quantities([HKQuantitySample])
 #endif
     /// WP-12: carries the pure `MappedWorkout` decision forward rather than
     /// a real `HKWorkout` -- unlike `.quantity`/`.category`, a real
@@ -109,7 +120,7 @@ extension MappedMetadata {
     /// file in this same module) for the workout's own metadata and its
     /// attached distance/energy samples -- so it can no longer stay
     /// file-private, but there's no reason for it to be public API either.
-    func makeHKMetadataDictionary() -> [String: Any] {
+    nonisolated func makeHKMetadataDictionary() -> [String: Any] {
         var result: [String: Any] = [
             HKMetadataKeyExternalUUID: externalUUID,
             "healthloom.externalID": externalID,
@@ -152,7 +163,7 @@ extension MappedQuantitySample {
     /// (`HKUnit.h`, iOS 26.4 SDK) via a scratch `swiftc -typecheck` before
     /// being written here -- see MappedTypes.swift's `MappedUnit` doc
     /// comment and progress.md's WP-11 entry.
-    fileprivate func makeHKUnit() -> HKUnit {
+    nonisolated fileprivate func makeHKUnit() -> HKUnit {
         switch unit {
         case .count:
             return .count()
@@ -183,7 +194,7 @@ extension MappedQuantitySample {
         }
     }
 
-    func makeHKQuantitySample() -> HKQuantitySample? {
+    nonisolated func makeHKQuantitySample() -> HKQuantitySample? {
         guard
             let type = HKObjectType.quantityType(
                 forIdentifier: HKQuantityTypeIdentifier(rawValue: healthKitIdentifier)

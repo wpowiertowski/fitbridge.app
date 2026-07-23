@@ -76,6 +76,13 @@ struct DashboardView: View {
                 // reachable -- one row, placed after the existing sections
                 // rather than touching the `.toolbar` WP-17 also edited.
                 Section { NavigationLink("Historical Backfill", destination: BackfillView()) }
+                // WP-12b: the consolidated Activities view (architecture.md
+                // D13.2) -- same one-row nav-link pattern as WP-15's
+                // Backfill link above.
+                Section {
+                    NavigationLink("Activities", destination: ActivitiesView())
+                        .accessibilityIdentifier("dashboard.activities.link")
+                }
             }
             .navigationTitle("HealthLoom")
             .toolbar {

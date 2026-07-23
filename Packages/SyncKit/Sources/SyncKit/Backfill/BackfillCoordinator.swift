@@ -352,6 +352,13 @@ public actor BackfillCoordinator {
             hkSampleType = try? await HealthKitObjectTypeResolver.sampleType(for: identifier)
         }
 
+        // WP-12b: refresh the conflict filter's coverage cache + retroactive
+        // cleanup for this chunk window, *before* the existence query --
+        // exactly mirroring `SyncEngine.performSync`'s own call (see the
+        // comment there). Historical chunks hit historical watch workouts
+        // just as incremental syncs hit recent ones.
+        try await conflictFilter.beginRun(type: type, windowStart: start, windowEnd: end)
+
         var knownExternalIDs: Set<String> = []
         if let hkSampleType {
             knownExternalIDs = try await writer.existingExternalIDs(type: hkSampleType, start: start, end: end)
@@ -365,7 +372,28 @@ public actor BackfillCoordinator {
             pageToken = page.nextPageToken
         } while pageToken != nil
 
+        // WP-12b: stamp deferred-session links onto the LocalSample rows the
+        // pages above upserted (same mechanics as
+        // `SyncEngine.applyDeferredSessionLinks`); the suppressed count is
+        // drained purely to reset the filter's per-run state -- backfill has
+        // no per-chunk log row to surface it in (`BackfillTypeStatus` tracks
+        // cursor progress, not per-run counts).
+        applyDeferredSessionLinks(await conflictFilter.drainDeferredSessionLinks(), context: context)
+        _ = await conflictFilter.drainSuppressedCount()
+
         return totalItemCount
+    }
+
+    /// WP-12b -- identical shape/semantics to `SyncEngine.applyDeferredSessionLinks`
+    /// (SyncEngine.swift); see that method's doc comment.
+    private func applyDeferredSessionLinks(_ links: [String: UUID], context: ModelContext) {
+        guard !links.isEmpty else { return }
+        for (externalID, workoutUUID) in links {
+            let descriptor = FetchDescriptor<LocalSample>(predicate: #Predicate { $0.externalID == externalID })
+            if let sample = try? context.fetch(descriptor).first {
+                sample.linkedWatchWorkoutUUID = workoutUUID
+            }
+        }
     }
 
     private func processPage(
@@ -377,6 +405,7 @@ public actor BackfillCoordinator {
         var newExternalIDs: [String] = []
         var localOnlyPoints: [GoogleDataPoint] = []
         var skipCount = 0
+        var workoutCount = 0
 
         for point in points {
             let mapped = await conflictFilter.resolve(await TypeMapper.map(point), for: point)
@@ -384,6 +413,12 @@ public actor BackfillCoordinator {
             case .quantity(let sample):
                 guard !knownExternalIDs.contains(point.id) else { continue }
                 batch.append(sample)
+                newExternalIDs.append(point.id)
+            case .quantities(let samples):
+                // WP-12b: a cumulative sample split at watch-coverage edges
+                // -- see `SyncEngine.processPage`'s identical arm.
+                guard !knownExternalIDs.contains(point.id) else { continue }
+                batch.append(contentsOf: samples)
                 newExternalIDs.append(point.id)
             case .category(let samples):
                 guard !knownExternalIDs.contains(point.id) else { continue }
@@ -393,12 +428,15 @@ public actor BackfillCoordinator {
                 guard !knownExternalIDs.contains(point.id) else { continue }
                 batch.append(correlation)
                 newExternalIDs.append(point.id)
-            case .workout:
-                // Same "not yet wired into this pipeline" posture as
-                // `SyncEngine.processPage`'s own `.workout` case -- see that
-                // method's doc comment (SyncEngine.swift) for the full
-                // explanation. Deliberately mirrored, not diverged from.
-                skipCount += 1
+            case .workout(let workout):
+                // WP-12b: wired for real, mirroring `SyncEngine.processPage`'s
+                // own `.workout` arm exactly -- see that arm's comment for
+                // the dedupe/immediate-save rationale. Anything reaching
+                // here already passed D13's conflict resolution above.
+                guard !knownExternalIDs.contains(point.id) else { continue }
+                _ = try await writer.saveWorkout(workout)
+                knownExternalIDs.insert(point.id)
+                workoutCount += 1
             case .localOnly:
                 localOnlyPoints.append(point)
             case .skip:
@@ -415,7 +453,7 @@ public actor BackfillCoordinator {
             upsertLocalSample(for: point, context: context)
         }
 
-        return newExternalIDs.count + localOnlyPoints.count + skipCount
+        return newExternalIDs.count + workoutCount + localOnlyPoints.count + skipCount
     }
 
     // MARK: - SwiftData bookkeeping (mirrors SyncEngine.swift's own helpers)
